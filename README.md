@@ -22,72 +22,105 @@ the project folder instead of using the terminal. It starts the app directly, an
 
 ## Using it
 
-1. **Load Excel File…** — pick the source `.xlsx`/`.xls`. Pick a sheet from the dropdown
-   if it's not the first one.
-2. **URL column** / **Status column** / **Comment column** / **Gevolg column** — type a
-   header name (matched against the sheet's top row, case-insensitive), a column letter
-   (`A`, `B`, …), or a 1-based column number (`1`, `2`, …). Status, comment and gevolg
-   columns are created automatically in the next free column if their header doesn't
-   already exist. Comment and gevolg columns are optional — leave them blank to disable
-   the matching field. **Gevolg options sheet** names the sheet holding the list of
-   follow-up measures (see below); it defaults to `Gevolg opties`.
-3. **Apply Columns** — scans down from the header row and jumps to the first row that has
+Setup lives in the collapsible sidebar on the left. The **☰** button hides it to give the
+browser more room; the one in the toolbar brings it back.
+
+1. **Load Excel File…** — pick the source `.xlsx`/`.xls`, then pick the **Sheet** from the
+   dropdown if it isn't the first one.
+2. **Dock the columns.** The sheet's header row is read automatically and each column name
+   appears as a draggable chip. Drag a chip onto a slot:
+
+   | Slot | Required | What it's used for |
+   | --- | --- | --- |
+   | URL | yes | the site to browse |
+   | Status | yes | where False Positive / Not Sure is written |
+   | Comment | no | the comment box above the browser |
+   | Gevolg | no | the follow-up measures chosen when a report is generated |
+   | Reference | no | the report reference (`I085-2026`) |
+
+   A slot whose name isn't in the header row is created in the next free column. Clear a
+   slot with the **×**. **Apply Columns** stays disabled until URL and Status are docked.
+3. **Gevolg options sheet** — which sheet holds the list of follow-up measures. It lists
+   the workbook's sheets; if `Gevolg opties` doesn't exist yet it's offered anyway and
+   created on demand.
+4. **Apply Columns** — scans down from the header row and jumps to the first row that has
    a URL but no status yet (so re-launching the app resumes where you left off). The log
    reports how many rows are in play.
 
    **Filters are honoured.** If the sheet has an AutoFilter applied, rows the filter
    excludes are skipped entirely — SiteWizard never navigates to them and never writes to
-   them. Filter the sheet in Excel first, save it, then load it here to work through just
-   that selection. Because Excel implements filtering by hiding rows, any row hidden by
-   hand is skipped the same way. Change the filter in Excel, save, then re-load the file
-   and press **Apply Columns** again to pick up the new selection.
-   **Cells listing more than one site.** Where a URL cell holds a site plus its
-   mirrors (`winbeast.com + winbeast1.com`), only the first is opened and reported on.
-   Separators recognised are `+`, `,`, `;`, line breaks and runs of spaces. The cell
-   itself is never rewritten, so the other URLs stay in the sheet.
+   them. Because Excel implements filtering by hiding rows, any row hidden by hand is
+   skipped the same way. Change the filter in Excel, save, then re-load the file and press
+   **Apply Columns** again to pick up the new selection.
 
-4. Browse the site normally in the embedded pane (it's a real Chromium view, not an
+   **Cells listing more than one site.** Where a URL cell holds a site plus its mirrors
+   (`winbeast.com + winbeast1.com`), only the first is opened and reported on. Separators
+   recognised are `+`, `,`, `;`, line breaks and runs of spaces. The cell itself is never
+   rewritten, so the other URLs stay in the sheet.
+5. Browse the site normally in the embedded pane (it's a real Chromium view, not an
    iframe, so it isn't blocked by sites that refuse to be framed — you can click links,
    scroll, log in, etc.).
-5. **Comment** field — free text, saved to the comment column as soon as you click away
+6. **Comment** field — free text, saved to the comment column as soon as you click away
    from it (or immediately before any button below moves you to a different entry).
-   Pre-filled with whatever is already in that row's comment cell when you arrive at it.
-6. Buttons:
-   - **Undo** / **Redo** — step backward/forward through your last status marks and
-     comment edits (not Skips, which never touch the file). Undoing jumps you back to the
-     row that change was made on and reverts it; Redo reapplies it.
-   - **Generate Report** — captures a screenshot of the page as currently shown and fills
-     out the selected template (see below). Does *not* advance to the next row. Once a
-     report exists for this entry, the button relabels itself **Add Screenshot** — click
-     it again (after scrolling/navigating) to append another screenshot to the same
-     report.
+7. Buttons:
+   - **Undo** / **Redo** — step backward/forward through your last status marks, comments,
+     gevolg selections and reference writes (not Skips, which never touch the file).
+   - **Generate Report** — opens the capture window (see below). Nothing is written until
+     you press Generate in there. Relabels itself **Regenerate Report** once a report
+     exists for the entry.
    - **Delete Report** — deletes the current entry's report file, after a confirmation
-     prompt. Enabled only when a report exists for the entry on screen.
-   - **False Positive** — writes `False Positive` into the status column for the current
-     row, saves the workbook immediately, and advances.
-   - **Not Sure** — writes `Not Sure` into the status column and advances. *(Your
-     original spec had this button also writing "False Positive" — that looked like a
-     copy/paste slip since it'd make the two buttons identical, so it writes "Not Sure"
-     instead.)*
-   - **← (previous entry)** — jumps back to the entry you were on immediately before this
-     one, purely for reviewing/re-editing it; it does not undo anything by itself.
-   - **→ Skip** — advances without touching the Excel file at all.
+     prompt.
+   - **False Positive** / **Not Sure** — writes that status, saves the workbook
+     immediately, and advances.
+   - **←** — jumps back to the entry you were on immediately before this one.
+   - **Skip →** — advances without touching the Excel file at all.
+
+## Generating a report
+
+**Generate Report** opens a separate window that does the evidence gathering:
+
+- It loads the site's homepage at A4 width so the page lays out like a printed sheet, then
+  collects the links on it, keeps the same-domain ones, and loads each in turn — one level
+  deep, 20 pages maximum. Tall pages are captured as several stacked slices (up to four).
+- Every screenshot is listed with a thumbnail, its page URL and which slice it is. All are
+  kept by default; untick the ones you don't want, or use **Select all** / **Select none**.
+  **Recapture** runs the crawl again.
+- **Click or right-click a thumbnail** to open it fullscreen at native resolution. Escape
+  closes it.
+- **Reference** is filled in at the top. If the row already has one it is reused as-is;
+  otherwise the next free `I###-YYYY` is worked out by scanning the whole workbook. It is
+  editable, and the badge says whether it's new or existing.
+- **Agent Name**, **Datum onderzoek**, **Bron** and the **Gevolg** measures are chosen in
+  the right-hand panel. The agent name is remembered between runs; Bron is pre-filled from
+  the row's own Bron column when the sheet has one.
+
+Only when you press **Generate Report** in that window is the `.docx` written and the
+sheet updated — the gevolg measures and the reference go in then, and never before. Cancel
+leaves everything untouched.
 
 ## Report template requirements
 
 Select any `.docx` as the template via **Select Report Template…**. In that document:
 
-- Use `{site}` as a normal text placeholder — it's replaced with the current URL.
-- For screenshots, since a report can now hold more than one, use a `docxtemplater` loop
-  rather than a single image tag:
-  ```
-  {#screenshots}
-  {%.}
-  {/screenshots}
-  ```
-  Each captured screenshot becomes one iteration of that loop (one image). This replaces
-  the older single `{%screenshots}` tag — if you already built a template with that,
-  change it to the loop form above.
+| Tag | Filled with |
+| --- | --- |
+| `{site}` | the URL being reported on |
+| `{refnr}` | the report reference |
+| `{datum}` | the investigation date |
+| `{controleur}` | the agent name |
+| `{bron}` | the source |
+
+For screenshots, use a `docxtemplater` loop rather than a single image tag:
+
+```
+{#screenshots}
+{%.}
+{/screenshots}
+```
+
+Each selected screenshot becomes one iteration of that loop. This replaces the older
+single `{%screenshots}` tag — if you already built a template with that, change it to the
+loop form above.
 
 For the follow-up measures, three tag shapes are available — use whichever suits the
 document:
@@ -99,74 +132,61 @@ document:
 ```
 
 `{#gevolgAll}` reproduces a paper tick-box list; the other two only mention what was
-actually selected. All three are always available, so a template can use none, one or
-several of them.
+actually selected. All tags are always available, so a template can use any subset.
 
 You must also pick an **Output Folder** before generating reports; each report is saved
-there as `report_<sanitized-url>.docx` — one file per entry, so **Add Screenshot**/
-**Delete Report** always know which file to update.
+there as `report_<sanitized-url>.docx` — one file per entry.
 
 ## Gevolg (follow-up measures)
 
-If you fill in a **Gevolg column**, a collapsible **Gevolg** panel appears above the
-browser with a tick box per measure — several can be ticked at once.
-
 **Where the options come from.** They're read from a separate sheet in the loaded
-workbook (`Gevolg opties` unless you name another), one option per row under a header
-row in the first column. If that sheet doesn't exist, SiteWizard creates it and seeds it
-with a default list, so a workbook that has never been used with SiteWizard still works
-on first run. After that the sheet is the source of truth — edit it in Excel to change
+workbook (`Gevolg opties` unless you pick another), one option per row under a header row
+in the first column. If that sheet doesn't exist, SiteWizard creates it and seeds it with
+a default list. After that the sheet is the source of truth — edit it in Excel to change
 the list, and re-click **Apply Columns** to reload.
 
 An option whose text ends in `:` gets a free-text box next to it, so
-`Doorsturen naar andere dienst :` is stored as
-`Doorsturen naar andere dienst : Dienst X`. Word's `Klik of tik om tekst in te voeren.`
-prompt is stripped automatically if you paste options straight out of the report
-template.
+`Doorsturen naar andere dienst :` is stored as `Doorsturen naar andere dienst : Dienst X`.
+Word's `Klik of tik om tekst in te voeren.` prompt is stripped automatically if you paste
+options straight out of the report template.
 
-**What gets written.** The ticked measures go into the gevolg column of the current row
-as one cell, separated by ` | `. Changes are undoable with the normal Undo/Redo buttons.
+**What gets written.** The ticked measures go into the gevolg column of the row as one
+cell, separated by ` | `, at the moment the report is generated. Changes are undoable.
 
-**Carry-over.** Whatever you tick stays ticked when you move to the next entry, so a run
-of sites getting the same treatment is quick to mark. The panel shows a carried-over
-selection in blue italics. A row that already has measures recorded always shows its own
-values instead. Carried-over measures are written to the sheet when you press
-**False Positive**, **Not Sure** or **Generate Report**; **Skip** and **←** leave the
-file untouched unless you actually changed the panel on that entry.
+**Carry-over.** Whatever you ticked last time is pre-selected the next time the capture
+window opens, so a run of sites getting the same treatment is quick to mark. A row that
+already has measures recorded shows its own values instead.
 
 ## Remembered settings
 
-The URL/status/comment/gevolg columns, options sheet name, report template path, and
-output folder are remembered
-between launches (stored in `sitewizard-settings.json` under Electron's per-user app data
-folder). The source Excel file itself is not reopened automatically — pick it again each
-run via **Load Excel File…**.
+The docked columns, options sheet name, agent name, report template path and output
+folder are remembered between launches (stored in `sitewizard-settings.json` under
+Electron's per-user app data folder). The source Excel file itself is not reopened
+automatically — pick it again each run via **Load Excel File…**.
 
 ## Known limitations
 
-- The screenshot captured is the current visible viewport of the embedded browser, not a
-  stitched full-page capture — scroll to what you want captured before clicking Generate
-  Report / Add Screenshot.
-- **Add Screenshot** across an app restart re-extracts the previously embedded images
-  straight out of the existing `.docx` (they're never re-downsized further), so quality
-  doesn't degrade across sessions, but this means the report file itself is the source of
-  truth for what's in it — don't hand-edit it outside SiteWizard if you plan to add more
-  screenshots later.
-- **Undo/Redo** and **Previous** history are per-session (in memory only); they reset
-  when you reload the sheet or restart the app. The Excel file itself is always safe
-  either way since every write is saved immediately.
+- Screenshots are as tall as the display allows, not a true A4 sheet. A window cannot be
+  taller than the screen work area, and neither offscreen rendering nor the DevTools
+  protocol lifts that limit, so pages are rendered at A4 *width* (which is what makes them
+  lay out like a printed page) and captured in viewport-height slices.
+- Crawling is one level deep and same-domain only. Pages reachable only through a menu
+  that needs JavaScript interaction, or on a different host, are not visited.
+- **Undo/Redo** and **Previous** history are per-session (in memory only); they reset when
+  you reload the sheet or restart the app. The Excel file itself is always safe either way
+  since every write is saved immediately.
 - Excel writing goes cell-by-cell directly against the loaded workbook (rather than
   rebuilding the whole sheet) so formulas/formatting on untouched cells and other sheets
-  are left alone, but SheetJS's free/community engine still has limited fidelity for
-  some formatting (e.g. conditional formatting, some styles) on save. Keep a backup of
-  the source file if that matters.
-- Dropdown lists whose source range sits on another sheet are stored by Excel as x14
-  data validations inside a worksheet's `<extLst>`, which SheetJS's writer drops.
-  SiteWizard captures those blocks when the file is opened and puts them back after
-  every save, so the dropdowns survive. Parts it does **not** restore, because they are
-  metadata rather than sheet content: `customXml/*` (Office/SharePoint document
-  properties), `xl/printerSettings` (page setup) and `xl/featurePropertyBag`. If a
-  workbook depends on those, work on a copy.
-- The top row of the sheet's used range is assumed to be the header row.
+  are left alone, but SheetJS's free/community engine still has limited fidelity for some
+  formatting (e.g. conditional formatting, some styles) on save. Keep a backup of the
+  source file if that matters.
+- Dropdown lists whose source range sits on another sheet are stored by Excel as x14 data
+  validations inside a worksheet's `<extLst>`, which SheetJS's writer drops. SiteWizard
+  captures those blocks when the file is opened and puts them back after every save, so
+  the dropdowns survive. Parts it does **not** restore, because they are metadata rather
+  than sheet content: `customXml/*` (Office/SharePoint document properties),
+  `xl/printerSettings` (page setup) and `xl/featurePropertyBag`. If a workbook depends on
+  those, work on a copy.
 - Filter state is read when the file is loaded, not watched live. If you re-filter the
   sheet in Excel while SiteWizard has it open, reload the file to pick up the change.
+- The top row of the sheet's used range is assumed to be the header row.
