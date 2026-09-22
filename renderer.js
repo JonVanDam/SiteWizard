@@ -1,16 +1,12 @@
 const els = {
+  sidebar: document.getElementById('sidebar'),
+  collapseBtn: document.getElementById('collapseBtn'),
+  sidebarShowBtn: document.getElementById('sidebarShowBtn'),
   loadExcelBtn: document.getElementById('loadExcelBtn'),
+  excelPath: document.getElementById('excelPath'),
   sheetSelect: document.getElementById('sheetSelect'),
-  urlCol: document.getElementById('urlCol'),
-  statusCol: document.getElementById('statusCol'),
-  commentCol: document.getElementById('commentCol'),
-  gevolgCol: document.getElementById('gevolgCol'),
+  columnPool: document.getElementById('columnPool'),
   gevolgSheet: document.getElementById('gevolgSheet'),
-  gevolgToggle: document.getElementById('gevolgToggle'),
-  gevolgCaret: document.getElementById('gevolgCaret'),
-  gevolgSummary: document.getElementById('gevolgSummary'),
-  gevolgClearBtn: document.getElementById('gevolgClearBtn'),
-  gevolgPanel: document.getElementById('gevolgPanel'),
   applyBtn: document.getElementById('applyBtn'),
   templateBtn: document.getElementById('templateBtn'),
   templatePath: document.getElementById('templatePath'),
@@ -31,14 +27,29 @@ const els = {
   prevBtn: document.getElementById('prevBtn'),
   skipBtn: document.getElementById('skipBtn'),
   log: document.getElementById('log'),
+  logToggle: document.getElementById('logToggle'),
   bvContainer: document.getElementById('bvContainer'),
 };
 
 let lastLoadedComment = '';
+let headerNames = [];
+
+// slot id -> column name currently docked there
+const slotValues = {
+  urlCol: '',
+  statusCol: '',
+  commentCol: '',
+  gevolgCol: '',
+  refCol: '',
+};
 
 function appendLog(msg) {
   const line = document.createElement('div');
-  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = `${new Date().toLocaleTimeString()}  `;
+  line.appendChild(ts);
+  line.appendChild(document.createTextNode(msg));
   els.log.appendChild(line);
   els.log.scrollTop = els.log.scrollHeight;
 }
@@ -62,6 +73,113 @@ function updateBounds() {
 window.addEventListener('resize', updateBounds);
 window.addEventListener('DOMContentLoaded', () => setTimeout(updateBounds, 50));
 
+// ---- sidebar ---------------------------------------------------------
+
+function setSidebarCollapsed(collapsed) {
+  els.sidebar.classList.toggle('collapsed', collapsed);
+  els.sidebarShowBtn.hidden = !collapsed;
+  // The BrowserView is positioned in screen coordinates, so it has to be told
+  // about the new content box once the CSS transition has finished.
+  setTimeout(updateBounds, 200);
+}
+els.collapseBtn.addEventListener('click', () => setSidebarCollapsed(true));
+els.sidebarShowBtn.addEventListener('click', () => setSidebarCollapsed(false));
+
+els.logToggle.addEventListener('click', () => {
+  const hidden = els.log.classList.toggle('hidden');
+  els.logToggle.innerHTML = hidden ? '&#9652;' : '&#9662;';
+  setTimeout(updateBounds, 50);
+});
+
+// ---- column docking --------------------------------------------------
+
+function slotEl(slot) {
+  return document.querySelector(`.slot[data-slot="${slot}"]`);
+}
+
+function refreshSlot(slot) {
+  const el = slotEl(slot);
+  const value = slotValues[slot];
+  const valueEl = el.querySelector('.slotValue');
+  const required = el.dataset.required === '1';
+  if (value) {
+    valueEl.textContent = value;
+    valueEl.classList.remove('empty');
+  } else {
+    valueEl.textContent = required ? 'drop here' : 'optional';
+    valueEl.classList.add('empty');
+  }
+  el.classList.toggle('filled', !!value);
+  el.classList.toggle('unfilled', required && !value);
+}
+
+function refreshChips() {
+  const used = new Set(Object.values(slotValues).filter(Boolean));
+  els.columnPool.querySelectorAll('.chip').forEach((chip) => {
+    chip.classList.toggle('used', used.has(chip.dataset.name));
+  });
+}
+
+function refreshApplyState() {
+  els.applyBtn.disabled = !(slotValues.urlCol && slotValues.statusCol && headerNames.length > 0);
+}
+
+function setSlot(slot, value) {
+  slotValues[slot] = value;
+  refreshSlot(slot);
+  refreshChips();
+  refreshApplyState();
+}
+
+function buildPool(names) {
+  headerNames = names.filter((n) => n && String(n).trim()).map((n) => String(n).trim());
+  els.columnPool.innerHTML = '';
+  if (headerNames.length === 0) {
+    const span = document.createElement('span');
+    span.className = 'poolEmpty';
+    span.textContent = 'This sheet has no header row.';
+    els.columnPool.appendChild(span);
+    return;
+  }
+  headerNames.forEach((name) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = name;
+    chip.title = name;
+    chip.draggable = true;
+    chip.dataset.name = name;
+    chip.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', name);
+      e.dataTransfer.effectAllowed = 'copy';
+      chip.classList.add('dragging');
+    });
+    chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+    els.columnPool.appendChild(chip);
+  });
+  refreshChips();
+  refreshApplyState();
+}
+
+document.querySelectorAll('.slot').forEach((el) => {
+  const slot = el.dataset.slot;
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    el.classList.add('over');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('over');
+    const name = e.dataTransfer.getData('text/plain');
+    if (name) setSlot(slot, name);
+  });
+  el.querySelector('.clearSlot').addEventListener('click', () => setSlot(slot, ''));
+  refreshSlot(slot);
+});
+
+// ---- entry state -----------------------------------------------------
+
 function setEntryActionButtonsEnabled(enabled) {
   [els.generateBtn, els.falsePositiveBtn, els.notSureBtn, els.skipBtn].forEach((b) => (b.disabled = !enabled));
 }
@@ -77,138 +195,6 @@ async function flushComment() {
   lastLoadedComment = value;
 }
 els.commentField.addEventListener('blur', flushComment);
-
-// ---- Gevolg (follow-up measures) ------------------------------------
-// Options come from a sheet in the workbook, so the panel is rebuilt from
-// whatever the main process hands back rather than from a fixed list here.
-
-let gevolgOptions = [];
-let gevolgSelection = []; // [{label, text}]
-let gevolgEnabled = false;
-// Whether the user changed the panel on *this* entry. A selection that was
-// only carried over from the previous entry is a suggestion, so Skip leaves
-// the file untouched unless it was actually edited here.
-let gevolgDirty = false;
-
-function summariseGevolg() {
-  if (!gevolgEnabled) {
-    els.gevolgSummary.textContent = '(select a gevolg column to enable)';
-    els.gevolgSummary.className = 'empty';
-    return;
-  }
-  if (gevolgSelection.length === 0) {
-    els.gevolgSummary.textContent = 'No measures selected.';
-    els.gevolgSummary.className = 'empty';
-    return;
-  }
-  const labels = gevolgSelection.map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label));
-  els.gevolgSummary.textContent = `${labels.length} selected: ${labels.join(' | ')}`;
-  els.gevolgSummary.className = gevolgDirty ? '' : 'prefilled';
-}
-
-function readGevolgFromPanel() {
-  const rows = els.gevolgPanel.querySelectorAll('.gevolgRow');
-  const out = [];
-  rows.forEach((row) => {
-    const box = row.querySelector('input[type="checkbox"]');
-    if (!box || !box.checked) return;
-    const textInput = row.querySelector('.freeText');
-    out.push({ label: box.dataset.label, text: textInput ? textInput.value.trim() : '' });
-  });
-  return out;
-}
-
-function onGevolgChanged() {
-  gevolgSelection = readGevolgFromPanel();
-  gevolgDirty = true;
-  // Free-text boxes only make sense while their measure is ticked.
-  els.gevolgPanel.querySelectorAll('.gevolgRow').forEach((row) => {
-    const box = row.querySelector('input[type="checkbox"]');
-    const textInput = row.querySelector('.freeText');
-    if (textInput && box) textInput.disabled = !box.checked;
-  });
-  els.gevolgClearBtn.disabled = gevolgSelection.length === 0;
-  summariseGevolg();
-}
-
-function buildGevolgPanel() {
-  els.gevolgPanel.innerHTML = '';
-  const chosen = new Map(gevolgSelection.map((s) => [s.label, s.text || '']));
-
-  // Anything stored in the sheet that is no longer in the options list is
-  // still shown (ticked) so editing the options sheet can't hide a decision.
-  const known = new Set(gevolgOptions.map((o) => o.label));
-  const extras = gevolgSelection
-    .filter((s) => !known.has(s.label))
-    .map((s) => ({ label: s.label, needsText: false }));
-
-  [...gevolgOptions, ...extras].forEach((opt, i) => {
-    const row = document.createElement('div');
-    row.className = 'gevolgRow';
-
-    const label = document.createElement('label');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.id = `gevolgOpt${i}`;
-    box.dataset.label = opt.label;
-    box.checked = chosen.has(opt.label);
-    box.addEventListener('change', onGevolgChanged);
-
-    const span = document.createElement('span');
-    span.textContent = opt.label;
-    label.appendChild(box);
-    label.appendChild(span);
-    row.appendChild(label);
-
-    if (opt.needsText) {
-      const textInput = document.createElement('input');
-      textInput.type = 'text';
-      textInput.className = 'freeText';
-      textInput.placeholder = 'Klik of tik om tekst in te voeren.';
-      textInput.value = chosen.get(opt.label) || '';
-      textInput.disabled = !box.checked;
-      textInput.addEventListener('input', () => {
-        gevolgDirty = true;
-      });
-      textInput.addEventListener('change', onGevolgChanged);
-      row.appendChild(textInput);
-    }
-
-    els.gevolgPanel.appendChild(row);
-  });
-
-  els.gevolgClearBtn.disabled = gevolgSelection.length === 0;
-  summariseGevolg();
-}
-
-function setGevolgPanelOpen(open) {
-  els.gevolgPanel.hidden = !open;
-  els.gevolgToggle.setAttribute('aria-expanded', String(open));
-  els.gevolgCaret.innerHTML = open ? '&#9652;' : '&#9662;';
-  // The panel is in normal flow, so opening it resizes #bvContainer and the
-  // BrowserView has to be told about its new box.
-  updateBounds();
-}
-
-// force: record the current selection even if the user didn't touch the panel
-// (i.e. they accepted the carried-over measures by making a decision).
-async function flushGevolg(force) {
-  if (!gevolgEnabled) return;
-  if (!gevolgDirty && !force) return;
-  await window.api.saveGevolg(gevolgSelection);
-  gevolgDirty = false;
-  summariseGevolg();
-}
-
-els.gevolgToggle.addEventListener('click', () => {
-  setGevolgPanelOpen(els.gevolgPanel.hidden);
-});
-
-els.gevolgClearBtn.addEventListener('click', () => {
-  gevolgSelection = [];
-  gevolgDirty = true;
-  buildGevolgPanel();
-});
 
 function setEntry(result) {
   if (!result) return;
@@ -226,12 +212,10 @@ function setEntry(result) {
     els.deleteReportBtn.disabled = true;
     els.generateBtn.textContent = 'Generate Report';
     lastLoadedComment = '';
-    els.gevolgToggle.disabled = true;
-    els.gevolgClearBtn.disabled = true;
     return;
   }
 
-  els.currentInfo.textContent = `Row ${result.row + 1}: ${result.url}`;
+  els.currentInfo.textContent = `Row ${result.row + 1}`;
   els.addressBar.value = result.url;
   setEntryActionButtonsEnabled(true);
 
@@ -239,16 +223,8 @@ function setEntry(result) {
   els.commentField.value = result.comment || '';
   lastLoadedComment = result.comment || '';
 
-  els.generateBtn.textContent = result.hasReport ? 'Add Screenshot' : 'Generate Report';
+  els.generateBtn.textContent = result.hasReport ? 'Regenerate Report' : 'Generate Report';
   els.deleteReportBtn.disabled = !result.hasReport;
-
-  gevolgEnabled = !!result.gevolgEnabled;
-  gevolgOptions = result.gevolgOptions || [];
-  gevolgSelection = result.gevolg || [];
-  // Carried-over measures count as untouched, so Skip won't write them.
-  gevolgDirty = false;
-  els.gevolgToggle.disabled = !gevolgEnabled;
-  buildGevolgPanel();
 
   updateBounds();
 }
@@ -258,40 +234,75 @@ setEntryActionButtonsEnabled(false);
 (async () => {
   const saved = await window.api.loadSettings();
   if (!saved) return;
-  if (saved.urlCol) els.urlCol.value = saved.urlCol;
-  if (saved.statusCol) els.statusCol.value = saved.statusCol;
-  if (saved.commentCol) els.commentCol.value = saved.commentCol;
-  if (saved.gevolgCol) els.gevolgCol.value = saved.gevolgCol;
-  if (saved.gevolgSheet) els.gevolgSheet.value = saved.gevolgSheet;
+  ['urlCol', 'statusCol', 'commentCol', 'gevolgCol', 'refCol'].forEach((slot) => {
+    if (saved[slot]) setSlot(slot, saved[slot]);
+  });
   if (saved.templatePath) els.templatePath.textContent = saved.templatePath;
   if (saved.outputFolder) els.outputPath.textContent = saved.outputFolder;
+  if (saved.gevolgSheet) {
+    const opt = document.createElement('option');
+    opt.value = saved.gevolgSheet;
+    opt.textContent = saved.gevolgSheet;
+    els.gevolgSheet.appendChild(opt);
+  }
 })();
+
+// ---- actions ---------------------------------------------------------
+
+function fillSheetSelects(sheetNames) {
+  const wanted = els.gevolgSheet.value;
+  els.sheetSelect.innerHTML = '';
+  els.gevolgSheet.innerHTML = '';
+  sheetNames.forEach((name) => {
+    const a = document.createElement('option');
+    a.value = name;
+    a.textContent = name;
+    els.sheetSelect.appendChild(a);
+    const b = document.createElement('option');
+    b.value = name;
+    b.textContent = name;
+    els.gevolgSheet.appendChild(b);
+  });
+  // Offer the default even when the workbook doesn't have it yet; the main
+  // process creates it on demand.
+  if (!sheetNames.includes('Gevolg opties')) {
+    const c = document.createElement('option');
+    c.value = 'Gevolg opties';
+    c.textContent = 'Gevolg opties (will be created)';
+    els.gevolgSheet.appendChild(c);
+  }
+  if (wanted && [...els.gevolgSheet.options].some((o) => o.value === wanted)) {
+    els.gevolgSheet.value = wanted;
+  } else if (sheetNames.includes('Gevolg opties')) {
+    els.gevolgSheet.value = 'Gevolg opties';
+  }
+  els.sheetSelect.disabled = false;
+  els.gevolgSheet.disabled = false;
+}
 
 els.loadExcelBtn.addEventListener('click', async () => {
   const result = await window.api.openExcel();
   if (!result) return;
-  els.sheetSelect.innerHTML = '';
-  result.sheetNames.forEach((name) => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    els.sheetSelect.appendChild(opt);
-  });
+  els.excelPath.textContent = result.filePath;
+  fillSheetSelects(result.sheetNames);
   appendLog('Loaded: ' + result.filePath);
-  await window.api.selectSheet(els.sheetSelect.value);
+  const info = await window.api.selectSheet(els.sheetSelect.value);
+  buildPool(info.header || []);
 });
 
 els.sheetSelect.addEventListener('change', async () => {
-  await window.api.selectSheet(els.sheetSelect.value);
+  const info = await window.api.selectSheet(els.sheetSelect.value);
+  buildPool(info.header || []);
 });
 
 els.applyBtn.addEventListener('click', async () => {
   try {
     const result = await window.api.setColumns({
-      urlCol: els.urlCol.value,
-      statusCol: els.statusCol.value,
-      commentCol: els.commentCol.value,
-      gevolgCol: els.gevolgCol.value,
+      urlCol: slotValues.urlCol,
+      statusCol: slotValues.statusCol,
+      commentCol: slotValues.commentCol,
+      gevolgCol: slotValues.gevolgCol,
+      refCol: slotValues.refCol,
       gevolgSheet: els.gevolgSheet.value,
     });
     appendLog('Columns applied. Jumping to first unprocessed row.');
@@ -317,26 +328,23 @@ els.forwardBtn.addEventListener('click', () => window.api.navForward());
 els.reloadBtn.addEventListener('click', () => window.api.navReload());
 
 els.generateBtn.addEventListener('click', async () => {
-  els.generateBtn.disabled = true;
-  // Record the measures before capturing so the sheet and the report agree.
-  await flushGevolg(true);
+  await flushComment();
   try {
-    const result = await window.api.generateReport();
-    const n = result.screenshotCount;
-    appendLog(`Report saved with ${n} screenshot${n === 1 ? '' : 's'}: ${result.outPath}`);
-    els.generateBtn.textContent = 'Add Screenshot';
-    els.deleteReportBtn.disabled = false;
+    await window.api.openCapture();
   } catch (err) {
     appendLog('Error: ' + err.message);
     alert(err.message);
-  } finally {
-    els.generateBtn.disabled = false;
   }
 });
 
+window.api.onReportCreated((info) => {
+  appendLog(`Report ${info.reference} created: ${info.outPath}`);
+  els.generateBtn.textContent = 'Regenerate Report';
+  els.deleteReportBtn.disabled = false;
+});
+
 els.deleteReportBtn.addEventListener('click', async () => {
-  const confirmed = confirm('Delete the report for this entry? This cannot be undone.');
-  if (!confirmed) return;
+  if (!confirm('Delete the report for this entry? This cannot be undone.')) return;
   try {
     await window.api.deleteReport();
     els.generateBtn.textContent = 'Generate Report';
@@ -348,36 +356,22 @@ els.deleteReportBtn.addEventListener('click', async () => {
   }
 });
 
-els.falsePositiveBtn.addEventListener('click', async () => {
+async function markAndAdvance(status) {
   await flushComment();
-  await flushGevolg(true);
   try {
-    const result = await window.api.markStatus('False Positive');
-    setEntry(result);
+    setEntry(await window.api.markStatus(status));
   } catch (err) {
     appendLog('Error: ' + err.message);
     alert(err.message);
   }
-});
-
-els.notSureBtn.addEventListener('click', async () => {
-  await flushComment();
-  await flushGevolg(true);
-  try {
-    const result = await window.api.markStatus('Not Sure');
-    setEntry(result);
-  } catch (err) {
-    appendLog('Error: ' + err.message);
-    alert(err.message);
-  }
-});
+}
+els.falsePositiveBtn.addEventListener('click', () => markAndAdvance('False Positive'));
+els.notSureBtn.addEventListener('click', () => markAndAdvance('Not Sure'));
 
 els.skipBtn.addEventListener('click', async () => {
   await flushComment();
-  await flushGevolg(false);
   try {
-    const result = await window.api.skip();
-    setEntry(result);
+    setEntry(await window.api.skip());
   } catch (err) {
     appendLog('Error: ' + err.message);
     alert(err.message);
@@ -386,10 +380,8 @@ els.skipBtn.addEventListener('click', async () => {
 
 els.prevBtn.addEventListener('click', async () => {
   await flushComment();
-  await flushGevolg(false);
   try {
-    const result = await window.api.previous();
-    setEntry(result);
+    setEntry(await window.api.previous());
   } catch (err) {
     appendLog('Error: ' + err.message);
     alert(err.message);
@@ -398,8 +390,7 @@ els.prevBtn.addEventListener('click', async () => {
 
 els.undoBtn.addEventListener('click', async () => {
   try {
-    const result = await window.api.undo();
-    setEntry(result);
+    setEntry(await window.api.undo());
   } catch (err) {
     appendLog('Error: ' + err.message);
     alert(err.message);
@@ -408,8 +399,7 @@ els.undoBtn.addEventListener('click', async () => {
 
 els.redoBtn.addEventListener('click', async () => {
   try {
-    const result = await window.api.redo();
-    setEntry(result);
+    setEntry(await window.api.redo());
   } catch (err) {
     appendLog('Error: ' + err.message);
     alert(err.message);

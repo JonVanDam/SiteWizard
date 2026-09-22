@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Generate Report</title>
+  <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="capture.css" />
+</head>
+<body class="capture">
+  <header id="capHeader">
+    <div class="capTitle">
+      <h1>Generate Report</h1>
+      <div id="capSite" class="muted">…</div>
+    </div>
+    <div class="capRef">
+      <label for="refField">Reference</label>
+      <input id="refField" type="text" spellcheck="false" />
+      <span id="refBadge" class="badge"></span>
+    </div>
+  </header>
+
+  <main id="capMain">
+    <section id="shotPane">
+      <div id="shotBar">
+        <div id="progress">
+          <span class="spinner" id="spinner"></span>
+          <span id="progressText">Starting…</span>
+        </div>
+        <div class="grow"></div>
+        <span id="shotCount" class="muted"></span>
+        <button id="selectAllBtn" class="ghost" disabled>Select all</button>
+        <button id="selectNoneBtn" class="ghost" disabled>Select none</button>
+        <button id="recaptureBtn" class="ghost" disabled>Recapture</button>
+      </div>
+      <div id="shotList"></div>
+      <div id="shotEmpty" class="empty">No screenshots yet.</div>
+    </section>
+
+    <aside id="capSide">
+      <div class="field">
+        <label for="agentSelect">Agent Name</label>
+        <select id="agentSelect"></select>
+      </div>
+
+      <div class="field">
+        <label for="datumField">Datum onderzoek</label>
+        <input id="datumField" type="text" spellcheck="false" />
+      </div>
+
+      <div class="field">
+        <label for="bronField">Bron</label>
+        <input id="bronField" type="text" spellcheck="false" />
+      </div>
+
+      <div class="field grow">
+        <label>Gevolg</label>
+        <div id="gevolgPanel"></div>
+        <div id="gevolgSummary" class="muted small"></div>
+      </div>
+
+      <div id="capActions">
+        <button id="cancelBtn" class="ghost">Cancel</button>
+        <button id="generateBtn" class="primary" disabled>Generate Report</button>
+      </div>
+    </aside>
+  </main>
+
+  <div id="viewer" hidden>
+    <div id="viewerBar">
+      <span id="viewerCaption" class="muted"></span>
+      <button id="viewerClose" class="ghost">Close</button>
+    </div>
+    <div id="viewerImageWrap"><img id="viewerImage" alt="" /></div>
+  </div>
+
+  <script src="capture.js"></script>
+</body>
+</html>

@@ -1,0 +1,198 @@
+body.capture {
+  display: flex;
+  flex-direction: column;
+}
+
+#capHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-soft);
+}
+.capTitle { min-width: 0; }
+#capSite {
+  font-size: 12px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 620px;
+}
+.capRef {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.capRef input { width: 130px; font-variant-numeric: tabular-nums; }
+
+#capMain {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+#shotPane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#shotBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+#progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#progressText {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+#shotList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 16px 20px;
+}
+
+.shot {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.shot:hover { border-color: var(--border); }
+.shot.selected { border-color: var(--accent-dim); background: #2a2529; }
+
+.shot input[type="checkbox"] { margin-top: 4px; flex: none; }
+
+/* Fixed width, capped height: slices are as tall as the display allows, so
+   their aspect ratio varies by machine. */
+.shot .thumbWrap {
+  flex: none;
+  width: 132px;
+  max-height: 186px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: zoom-in;
+}
+.shot .thumbWrap img {
+  width: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.shot .meta { min-width: 0; flex: 1; padding-top: 2px; }
+.shot .meta .url {
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--text);
+  line-height: 1.45;
+}
+.shot .meta .sub {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#capSide {
+  width: 330px;
+  flex: none;
+  border-left: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 14px;
+  overflow-y: auto;
+}
+#capSide .field { display: flex; flex-direction: column; gap: 6px; }
+#capSide .field.grow { flex: 1; min-height: 0; }
+#capSide label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+
+#gevolgPanel {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  padding: 8px;
+}
+.gevolgRow { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
+.gevolgRow label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.gevolgRow input[type="checkbox"] { margin-top: 2px; flex: none; }
+.gevolgRow .freeText { margin-left: 22px; width: calc(100% - 22px); font-size: 12px; }
+
+#gevolgSummary { line-height: 1.5; }
+
+#capActions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: auto;
+}
+#capActions button { flex: 1; padding: 9px 12px; }
+
+#viewer {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 12, 14, 0.96);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+#viewerBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+#viewerCaption { flex: 1; font-size: 12px; word-break: break-all; }
+#viewerImageWrap {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+#viewerImage {
+  max-width: 100%;
+  background: #fff;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}

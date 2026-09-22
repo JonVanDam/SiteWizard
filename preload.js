@@ -20,11 +20,19 @@ contextBridge.exposeInMainWorld('api', {
   undo: () => ipcRenderer.invoke('entries:undo'),
   redo: () => ipcRenderer.invoke('entries:redo'),
   saveComment: (value) => ipcRenderer.invoke('entries:saveComment', value),
-  saveGevolg: (selection) => ipcRenderer.invoke('entries:saveGevolg', selection),
 
-  generateReport: () => ipcRenderer.invoke('report:generate'),
+  // Report generation runs in its own window.
+  openCapture: () => ipcRenderer.invoke('capture:open'),
+  captureContext: () => ipcRenderer.invoke('capture:context'),
+  captureRun: () => ipcRenderer.invoke('capture:run'),
+  captureImage: (id) => ipcRenderer.invoke('capture:image', id),
+  captureCancel: () => ipcRenderer.invoke('capture:cancel'),
+  captureGenerate: (payload) => ipcRenderer.invoke('capture:generate', payload),
+  onCaptureProgress: (cb) => ipcRenderer.on('capture-progress', (event, p) => cb(p)),
+
   deleteReport: () => ipcRenderer.invoke('report:delete'),
 
   onLog: (cb) => ipcRenderer.on('log', (event, msg) => cb(msg)),
   onNav: (cb) => ipcRenderer.on('nav-state', (event, navState) => cb(navState)),
+  onReportCreated: (cb) => ipcRenderer.on('report-created', (event, info) => cb(info)),
 });

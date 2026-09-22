@@ -1,102 +1,219 @@
-* { box-sizing: border-box; font-family: Segoe UI, sans-serif; font-size: 13px; }
-html, body { height: 100%; margin: 0; display: flex; flex-direction: column; }
+/* Main window layout. Dark theme tokens live in theme.css. */
 
-#setup, #navbar, #actions {
+#shell {
+  display: flex;
+  height: 100%;
+}
+
+/* ---- sidebar ---- */
+
+#sidebar {
+  width: 290px;
+  flex: none;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.16s ease;
+  overflow: hidden;
+}
+#sidebar.collapsed { width: 0; border-right: none; }
+
+#sideHead {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #ccc;
-  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  flex: none;
 }
+#sideHead h1 { flex: 1; }
 
-#actions { border-top: 1px solid #ccc; border-bottom: none; }
-
-.sep { flex-basis: 100%; height: 0; }
-.divider { width: 1px; align-self: stretch; background: #ccc; margin: 2px 4px; }
-.pathLabel { color: #555; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-#addressBar { flex: 1; padding: 4px 6px; }
-#currentInfo { white-space: nowrap; color: #333; }
-
-#commentBar {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #ccc;
-}
-#commentBar label { padding-top: 4px; white-space: nowrap; }
-#commentField { flex: 1; resize: vertical; font-family: inherit; font-size: 13px; padding: 4px 6px; }
-
-/* The embedded BrowserView always paints on top of this page, so the gevolg
-   panel must not float over #bvContainer — it would be invisible. Instead it
-   sits in normal flow and shrinks the browser area when it opens. */
-#gevolgBar {
-  background: #f3f3f3;
-  border-bottom: 1px solid #ccc;
-  padding: 6px 10px;
-}
-#gevolgHeader { display: flex; align-items: center; gap: 10px; }
-#gevolgToggle { padding: 4px 10px; cursor: pointer; }
-#gevolgToggle:disabled { cursor: default; }
-#gevolgSummary {
+#sideBody {
   flex: 1;
-  color: #333;
+  overflow-y: auto;
+  padding: 4px 14px 16px;
+}
+
+.sideSection { padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+.sideSection:last-child { border-bottom: none; }
+
+.sectionTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.hint { font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; line-height: 1.4; }
+.fieldLabel {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  margin: 12px 0 5px;
+}
+
+button.wide { width: 100%; margin-bottom: 6px; }
+button.iconBtn { padding: 4px 8px; line-height: 1; }
+
+#sidebar select { width: 100%; }
+
+.pathLabel {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+/* ---- draggable column chips ---- */
+
+.pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  margin-bottom: 12px;
+}
+.poolEmpty { font-size: 11.5px; color: var(--text-dim); padding: 2px; }
+
+.chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 9px;
+  font-size: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  cursor: grab;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.chip:hover { border-color: var(--accent-dim); background: var(--bg-hover); }
+.chip.dragging { opacity: 0.4; }
+.chip.used { opacity: 0.35; }
+
+.slots { display: flex; flex-direction: column; gap: 6px; }
+
+.slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-height: 34px;
+}
+.slot.over { border-color: var(--accent); background: #2f2a29; }
+.slot.filled { border-color: var(--border); }
+.slot[data-required="1"].unfilled { border-color: var(--accent-dim); }
+
+.slotName {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  width: 68px;
+  flex: none;
+}
+.slotValue {
+  flex: 1;
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#gevolgSummary.prefilled { color: #0b5ed7; font-style: italic; }
-#gevolgSummary.empty { color: #777; }
-.linkBtn {
-  background: none;
-  border: none;
-  color: #0b5ed7;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 2px 4px;
-}
-.linkBtn:disabled { color: #999; cursor: default; text-decoration: none; }
+.slotValue.empty { color: var(--text-dim); font-style: italic; }
+.clearSlot { visibility: hidden; flex: none; color: var(--text-muted); }
+.slot.filled .clearSlot { visibility: visible; }
 
-#gevolgPanel {
-  margin-top: 6px;
-  max-height: 190px;
-  overflow-y: auto;
-  border: 1px solid #ccc;
-  background: #fff;
-  padding: 6px 8px;
+/* ---- content ---- */
+
+#content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+#navbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-soft);
 }
-.gevolgRow { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; }
-.gevolgRow label { display: flex; align-items: flex-start; gap: 6px; flex: 1; cursor: pointer; }
-.gevolgRow input[type="checkbox"] { margin-top: 2px; }
-.gevolgRow .freeText {
+#addressBar {
   flex: 1;
-  min-width: 140px;
-  padding: 3px 5px;
-  font-family: inherit;
-  font-size: 13px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 12px;
 }
+#currentInfo { font-size: 12px; white-space: nowrap; }
 
-#bvContainer { flex: 1; min-height: 0; background: #fff; }
+#commentBar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-soft);
+}
+#commentBar label {
+  padding-top: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+#commentField { flex: 1; resize: vertical; line-height: 1.45; }
 
-#actions button { padding: 8px 16px; }
-#actions button.narrowBtn { padding: 8px 10px; }
-#falsePositiveBtn { background: #f8d7da; }
-#notSureBtn { background: #fff3cd; }
-#skipBtn, #prevBtn { background: #e2e3e5; }
-#generateBtn { background: #cfe2ff; }
-#deleteReportBtn { background: #f5c2c7; }
-#undoBtn, #redoBtn { background: #e9ecef; }
+#bvContainer { flex: 1; min-height: 0; background: #ffffff; }
 
+#actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+#actions button { padding: 8px 14px; }
+.divider { width: 1px; align-self: stretch; background: var(--border-soft); margin: 2px 4px; }
+
+#logWrap {
+  background: #131315;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+#logHead {
+  display: flex;
+  align-items: center;
+  padding: 5px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+#logHead span { flex: 1; }
 #log {
   height: 110px;
   overflow-y: auto;
-  background: #111;
-  color: #ddd;
-  font-family: Consolas, monospace;
-  font-size: 12px;
-  padding: 6px 10px;
+  padding: 4px 12px 8px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11.5px;
+  color: #b9b7b3;
+  line-height: 1.6;
 }
+#log.hidden { display: none; }
+#log div { white-space: pre-wrap; word-break: break-word; }
+#log .ts { color: var(--text-dim); }

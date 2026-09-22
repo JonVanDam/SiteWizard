@@ -1,86 +1,117 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>SiteWizard</title>
+  <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="setup">
-    <button id="loadExcelBtn">Load Excel File…</button>
-    <label>Sheet
-      <select id="sheetSelect"></select>
-    </label>
-    <label>URL column
-      <input id="urlCol" type="text" placeholder="e.g. URL, B, or 2" size="10" />
-    </label>
-    <label>Status column
-      <input id="statusCol" type="text" placeholder="e.g. Status, D, or 4" size="10" />
-    </label>
-    <label>Comment column (optional)
-      <input id="commentCol" type="text" placeholder="e.g. Comment, E, or 5" size="14" />
-    </label>
-    <label>Gevolg column (optional)
-      <input id="gevolgCol" type="text" placeholder="e.g. Gevolg, F, or 6" size="14" />
-    </label>
-    <label>Gevolg options sheet
-      <input id="gevolgSheet" type="text" placeholder="Gevolg opties" size="14" />
-    </label>
-    <button id="applyBtn">Apply Columns</button>
+  <div id="shell">
+    <aside id="sidebar">
+      <div id="sideHead">
+        <h1>SiteWizard</h1>
+        <button id="collapseBtn" class="ghost iconBtn" title="Collapse sidebar">&#9776;</button>
+      </div>
 
-    <span class="sep"></span>
+      <div id="sideBody">
+        <section class="sideSection">
+          <div class="sectionTitle">Source</div>
+          <button id="loadExcelBtn" class="wide">Load Excel File…</button>
+          <div id="excelPath" class="pathLabel">(no file loaded)</div>
+          <label class="fieldLabel" for="sheetSelect">Sheet</label>
+          <select id="sheetSelect" disabled></select>
+        </section>
 
-    <button id="templateBtn">Select Report Template…</button>
-    <span id="templatePath" class="pathLabel">(none)</span>
-    <button id="outputBtn">Select Output Folder…</button>
-    <span id="outputPath" class="pathLabel">(none)</span>
-  </div>
+        <section class="sideSection">
+          <div class="sectionTitle">Columns</div>
+          <div class="hint">Drag a column name onto a slot below.</div>
+          <div id="columnPool" class="pool"><span class="poolEmpty">Load a file to list its columns.</span></div>
 
-  <div id="navbar">
-    <button id="backBtn">&larr;</button>
-    <button id="forwardBtn">&rarr;</button>
-    <button id="reloadBtn">&#8635;</button>
-    <input id="addressBar" type="text" readonly />
-    <span id="currentInfo">No entry loaded.</span>
-  </div>
+          <div class="slots">
+            <div class="slot" data-slot="urlCol" data-required="1">
+              <span class="slotName">URL</span>
+              <span class="slotValue empty">drop here</span>
+              <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
+            </div>
+            <div class="slot" data-slot="statusCol" data-required="1">
+              <span class="slotName">Status</span>
+              <span class="slotValue empty">drop here</span>
+              <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
+            </div>
+            <div class="slot" data-slot="commentCol">
+              <span class="slotName">Comment</span>
+              <span class="slotValue empty">optional</span>
+              <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
+            </div>
+            <div class="slot" data-slot="gevolgCol">
+              <span class="slotName">Gevolg</span>
+              <span class="slotValue empty">optional</span>
+              <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
+            </div>
+            <div class="slot" data-slot="refCol">
+              <span class="slotName">Reference</span>
+              <span class="slotValue empty">optional</span>
+              <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
+            </div>
+          </div>
 
-  <div id="commentBar">
-    <label for="commentField">Comment</label>
-    <textarea id="commentField" rows="2" disabled placeholder="(select a comment column to enable)"></textarea>
-  </div>
+          <label class="fieldLabel" for="gevolgSheet">Gevolg options sheet</label>
+          <select id="gevolgSheet" disabled></select>
 
-  <div id="gevolgBar">
-    <div id="gevolgHeader">
-      <button id="gevolgToggle" disabled aria-expanded="false">Gevolg <span id="gevolgCaret">&#9662;</span></button>
-      <span id="gevolgSummary">(select a gevolg column to enable)</span>
-      <button id="gevolgClearBtn" class="linkBtn" disabled>Clear all</button>
+          <button id="applyBtn" class="primary wide" disabled>Apply Columns</button>
+        </section>
+
+        <section class="sideSection">
+          <div class="sectionTitle">Report</div>
+          <button id="templateBtn" class="wide">Select Report Template…</button>
+          <div id="templatePath" class="pathLabel">(none)</div>
+          <button id="outputBtn" class="wide">Select Output Folder…</button>
+          <div id="outputPath" class="pathLabel">(none)</div>
+        </section>
+      </div>
+    </aside>
+
+    <div id="content">
+      <div id="navbar">
+        <button id="sidebarShowBtn" class="ghost iconBtn" title="Show sidebar" hidden>&#9776;</button>
+        <button id="backBtn" class="ghost iconBtn" title="Back">&larr;</button>
+        <button id="forwardBtn" class="ghost iconBtn" title="Forward">&rarr;</button>
+        <button id="reloadBtn" class="ghost iconBtn" title="Reload">&#8635;</button>
+        <input id="addressBar" type="text" readonly />
+        <span id="currentInfo" class="muted">No entry loaded.</span>
+      </div>
+
+      <div id="commentBar">
+        <label for="commentField">Comment</label>
+        <textarea id="commentField" rows="2" disabled placeholder="(dock a comment column to enable)"></textarea>
+      </div>
+
+      <div id="bvContainer"></div>
+
+      <div id="actions">
+        <button id="undoBtn" disabled title="Undo last change">&#8630; Undo</button>
+        <button id="redoBtn" disabled title="Redo">Redo &#8631;</button>
+        <span class="divider"></span>
+        <button id="generateBtn" class="primary" disabled>Generate Report</button>
+        <button id="deleteReportBtn" class="danger" disabled>Delete Report</button>
+        <span class="divider"></span>
+        <button id="falsePositiveBtn" disabled>False Positive</button>
+        <button id="notSureBtn" disabled>Not Sure</button>
+        <span class="divider"></span>
+        <button id="prevBtn" disabled title="Previous entry">&larr;</button>
+        <button id="skipBtn" disabled>Skip &rarr;</button>
+      </div>
+
+      <div id="logWrap">
+        <div id="logHead">
+          <span>Activity</span>
+          <button id="logToggle" class="ghost iconBtn" title="Hide log">&#9662;</button>
+        </div>
+        <div id="log"></div>
+      </div>
     </div>
-    <div id="gevolgPanel" hidden></div>
   </div>
-
-  <div id="bvContainer"></div>
-
-  <div id="actions">
-    <button id="undoBtn" disabled title="Undo last change">&#8630; Undo</button>
-    <button id="redoBtn" disabled title="Redo">Redo &#8631;</button>
-
-    <span class="divider"></span>
-
-    <button id="generateBtn" disabled>Generate Report</button>
-    <button id="deleteReportBtn" disabled>Delete Report</button>
-
-    <span class="divider"></span>
-
-    <button id="falsePositiveBtn" disabled>False Positive</button>
-    <button id="notSureBtn" disabled>Not Sure</button>
-
-    <span class="divider"></span>
-
-    <button id="prevBtn" class="narrowBtn" disabled title="Previous entry">&larr;</button>
-    <button id="skipBtn" disabled>&rarr; Skip</button>
-  </div>
-
-  <div id="log"></div>
 
   <script src="renderer.js"></script>
 </body>

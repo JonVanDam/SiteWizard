@@ -22,6 +22,24 @@ const DEFAULT_GEVOLG_OPTIONS = [
 ];
 const DEFAULT_GEVOLG_SHEET = 'Gevolg opties';
 const GEVOLG_SEPARATOR = ' | ';
+
+// Names offered in the "Agent Name" dropdown when the settings file has none
+// yet; taken from the combo box that used to live in the report template.
+const DEFAULT_AGENT_NAMES = ['Eline GUERBAOUI', 'Barbara MASQUELIER'];
+
+// Report references look like I085-2026: a letter, a zero-padded sequence and
+// the year. New ones continue the highest sequence found anywhere in the file.
+const REFERENCE_PATTERN = /\b([A-Z])(\d{2,4})-(\d{4})\b/g;
+const REFERENCE_PREFIX = 'I';
+
+// Capture geometry. A4 at 150 dpi, which keeps body text legible in the
+// report without producing enormous PNGs.
+const A4_WIDTH = 1240;
+const A4_HEIGHT = 1754;
+const MAX_PAGES = 20; // homepage plus same-domain links found on it
+const MAX_SLICES_PER_PAGE = 4;
+const PAGE_LOAD_TIMEOUT_MS = 15000;
+const PAGE_SETTLE_MS = 1200;
 // Word's "click here to enter text" prompt, carried over when options are
 // pasted out of the report template. Stripped so only the label remains.
 const GEVOLG_PROMPT = /klik of tik om tekst in te voeren\.?\s*$/i;
@@ -41,7 +59,11 @@ const state = {
   // Last selection the user confirmed, carried to the next entry as a
   // pre-fill so a run of sites getting the same measures is quick to mark.
   gevolgSticky: [],
+  refColIdx: null, // column holding the report reference, null if not configured
   currentRow: null, // 0-based sheet row index of the entry currently on screen
+
+  // The capture window and everything it has collected for one entry.
+  capture: null, // { row, url, shots: [{id, pageUrl, slice, buffer, width, height}] }
 
   // <extLst> blocks captured from the source workbook, re-applied after
   // every save (see restoreSheetExtensions).
@@ -436,63 +458,7 @@ function reportPathFor(url) {
   return path.join(state.outputFolder, `report_${safeName}.docx`);
 }
 
-function pngDimensions(buffer) {
-  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
-}
-
-// Loads (and caches) the screenshots captured so far for a row. If none are
-// in memory yet but a report already exists on disk for this URL, its
-// embedded images are pulled back out so "Add Screenshot" can append to them
-// even after an app restart.
-function getScreenshotsForRow(row, url) {
-  if (!state.screenshotsByRow[row]) {
-    const list = [];
-    if (state.outputFolder) {
-      const reportPath = reportPathFor(url);
-      if (fs.existsSync(reportPath)) {
-        try {
-          const content = fs.readFileSync(reportPath, 'binary');
-          const zip = new PizZip(content);
-          const mediaNames = Object.keys(zip.files)
-            .filter((name) => /^word\/media\/image\d+\.png$/i.test(name))
-            .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10));
-          for (const name of mediaNames) {
-            const buffer = zip.files[name].asNodeBuffer();
-            const { width, height } = pngDimensions(buffer);
-            list.push({ buffer, width, height });
-          }
-        } catch (err) {
-          log('Could not read images from existing report: ' + err.message);
-        }
-      }
-    }
-    state.screenshotsByRow[row] = list;
-  }
-  return state.screenshotsByRow[row];
-}
-
-// Builds the gevolg-related tag values for the template. Three shapes are
-// offered so a template can show the measures as a list, as one line, or as a
-// full tick-box checklist mirroring the paper form:
-//   {#gevolg}{.}{/gevolg}                  -> only the selected measures
-//   {gevolgText}                           -> selected measures on one line
-//   {#gevolgAll}{mark} {label}{/gevolgAll} -> every option, ticked or not
-function gevolgTagValues(selection) {
-  const chosen = (selection || []).map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label));
-  const chosenLabels = new Set((selection || []).map((s) => s.label));
-  const all = state.gevolgOptions.map((opt) => {
-    const hit = (selection || []).find((s) => s.label === opt.label);
-    const checked = chosenLabels.has(opt.label);
-    return {
-      label: hit && hit.text ? `${opt.label} ${hit.text}`.trim() : opt.label,
-      checked,
-      mark: checked ? '☒' : '☐',
-    };
-  });
-  return { gevolg: chosen, gevolgText: chosen.join(GEVOLG_SEPARATOR), gevolgAll: all };
-}
-
-function writeReport(url, screenshots, selection) {
+function writeReport(context, screenshots) {
   const content = fs.readFileSync(state.templatePath, 'binary');
   const zip = new PizZip(content);
   const maxWidth = 600;
@@ -516,9 +482,13 @@ function writeReport(url, screenshots, selection) {
 
   try {
     doc.render({
-      site: url,
+      site: context.site,
+      refnr: context.refnr || '',
+      datum: context.datum || '',
+      controleur: context.controleur || '',
+      bron: context.bron || '',
       screenshots: screenshots.map((_, i) => i + 1),
-      ...gevolgTagValues(selection),
+      ...gevolgTagValues(context.gevolg),
     });
   } catch (err) {
     throw new Error(
@@ -528,6 +498,208 @@ function writeReport(url, screenshots, selection) {
     );
   }
   return doc.getZip().generate({ type: 'nodebuffer' });
+}
+
+// ---- Report references ------------------------------------------------
+// A row that already carries a reference keeps it, so regenerating a report
+// doesn't renumber it. Otherwise the next free sequence is taken from the
+// highest reference anywhere in the workbook.
+
+function scanHighestReference(year) {
+  let highest = 0;
+  if (!state.workbook) return highest;
+  for (const name of state.workbook.SheetNames) {
+    const sheet = state.workbook.Sheets[name];
+    if (!sheet || !sheet['!ref']) continue;
+    for (const addr of Object.keys(sheet)) {
+      if (addr[0] === '!') continue;
+      const cell = sheet[addr];
+      if (!cell || cell.v === undefined) continue;
+      const text = String(cell.v);
+      REFERENCE_PATTERN.lastIndex = 0;
+      let m;
+      while ((m = REFERENCE_PATTERN.exec(text)) !== null) {
+        if (m[1] !== REFERENCE_PREFIX) continue;
+        if (Number(m[3]) !== year) continue;
+        highest = Math.max(highest, Number(m[2]));
+      }
+    }
+  }
+  return highest;
+}
+
+function formatReference(seq, year) {
+  return `${REFERENCE_PREFIX}${String(seq).padStart(3, '0')}-${year}`;
+}
+
+// Returns { reference, isNew } for a row.
+function referenceForRow(row) {
+  const year = new Date().getFullYear();
+  if (state.refColIdx != null && state.workbook) {
+    const sheet = state.workbook.Sheets[state.sheetName];
+    const existing = cellValue(sheet, row, state.refColIdx);
+    if (existing !== undefined && String(existing).trim()) {
+      return { reference: String(existing).trim(), isNew: false };
+    }
+  }
+  return { reference: formatReference(scanHighestReference(year) + 1, year), isNew: true };
+}
+
+// The sheet's own Bron value for a row, if the sheet has such a column.
+function bronForRow(row) {
+  if (!state.workbook || !state.sheetName) return '';
+  const sheet = state.workbook.Sheets[state.sheetName];
+  const idx = resolveColumn(sheet, state.range, 'Bron', false);
+  if (idx === -1) return '';
+  const v = cellValue(sheet, row, idx);
+  return v === undefined ? '' : String(v).trim();
+}
+
+// ---- Crawling and capturing --------------------------------------------
+
+function absoluteUrl(url) {
+  return /^https?:\/\//i.test(url) ? url : 'https://' + url;
+}
+
+function sameSite(a, b) {
+  try {
+    const strip = (h) => h.replace(/^www\./i, '').toLowerCase();
+    return strip(new URL(a).hostname) === strip(new URL(b).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function loadInWindow(win, url) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => done(false), PAGE_LOAD_TIMEOUT_MS);
+    win.webContents.once('did-finish-load', () => done(true));
+    win.webContents.once('did-fail-load', (e, code) => done(code === -3));
+    win.webContents.loadURL(url).catch(() => done(false));
+  });
+}
+
+// Captures a page top to bottom in viewport-height slices.
+// Pages are rendered at A4 width so they lay out like a printed page rather
+// than a wide desktop window. The viewport height is whatever the display
+// allows -- a window cannot be taller than the screen work area, and neither
+// offscreen rendering nor the DevTools protocol lifts that limit -- so tall
+// pages are captured as several stacked slices instead of one A4 sheet.
+
+function viewportHeightFor(win) {
+  return win.getContentBounds().height;
+}
+
+async function documentHeight(win) {
+  try {
+    return await win.webContents.executeJavaScript(
+      'Math.max(document.body ? document.body.scrollHeight : 0,' +
+        ' document.documentElement ? document.documentElement.scrollHeight : 0,' +
+        ' window.innerHeight)'
+    );
+  } catch {
+    return viewportHeightFor(win);
+  }
+}
+
+async function captureSlices(win, pageUrl, onShot) {
+  await new Promise((r) => setTimeout(r, PAGE_SETTLE_MS));
+  const viewport = Math.max(1, viewportHeightFor(win));
+  const height = await documentHeight(win);
+  const slices = Math.max(1, Math.min(MAX_SLICES_PER_PAGE, Math.ceil(height / viewport)));
+
+  for (let i = 0; i < slices; i++) {
+    try {
+      await win.webContents.executeJavaScript(`window.scrollTo(0, ${i * viewport})`);
+      await new Promise((r) => setTimeout(r, 350));
+      const image = await win.webContents.capturePage();
+      const size = image.getSize();
+      if (size.width === 0 || size.height === 0) continue;
+      onShot({
+        pageUrl,
+        slice: i + 1,
+        sliceCount: slices,
+        buffer: image.toPNG(),
+        thumb: image.resize({ width: 320 }).toDataURL(),
+        width: size.width,
+        height: size.height,
+      });
+    } catch (err) {
+      log(`Capture failed for ${pageUrl} (slice ${i + 1}): ${err.message}`);
+    }
+  }
+}
+
+async function crawlAndCapture(startUrl, progress) {
+  const root = absoluteUrl(startUrl);
+  const win = new BrowserWindow({
+    show: false,
+    // Without useContentSize these are the outer frame dimensions, and the
+    // page would render shorter than A4 with the wrong aspect ratio.
+    useContentSize: true,
+    width: A4_WIDTH,
+    height: A4_HEIGHT, // clamped to the work area by the OS; that is fine
+    frame: false,
+    webPreferences: { offscreen: false, javascript: true, images: true, sandbox: true },
+  });
+  win.webContents.setAudioMuted(true);
+
+  const shots = [];
+  let nextId = 1;
+  const collect = (shot) => {
+    shots.push({ id: String(nextId++), ...shot });
+    progress({ phase: 'capturing', shots: shots.length, page: shot.pageUrl });
+  };
+
+  try {
+    progress({ phase: 'loading', page: root });
+    const ok = await loadInWindow(win, root);
+    if (!ok) {
+      progress({ phase: 'warning', message: `Homepage did not load cleanly: ${root}` });
+    }
+    const landed = win.webContents.getURL() || root;
+    await captureSlices(win, landed, collect);
+
+    let links = [];
+    try {
+      links = await win.webContents.executeJavaScript(
+        "Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
+      );
+    } catch {
+      /* no links is fine */
+    }
+
+    const seen = new Set([landed.split('#')[0]]);
+    const queue = [];
+    for (const href of links) {
+      const clean = String(href).split('#')[0];
+      if (!/^https?:\/\//i.test(clean)) continue;
+      if (!sameSite(clean, landed)) continue;
+      if (seen.has(clean)) continue;
+      seen.add(clean);
+      queue.push(clean);
+      if (queue.length >= MAX_PAGES - 1) break;
+    }
+    progress({ phase: 'queued', total: queue.length + 1 });
+
+    for (let i = 0; i < queue.length; i++) {
+      if (!state.capture || state.capture.cancelled) break;
+      progress({ phase: 'loading', page: queue[i], index: i + 2, total: queue.length + 1 });
+      const loaded = await loadInWindow(win, queue[i]);
+      if (!loaded) continue;
+      await captureSlices(win, queue[i], collect);
+    }
+  } finally {
+    if (!win.isDestroyed()) win.destroy();
+  }
+  return shots;
 }
 
 // ---- Entry navigation ------------------------------------------------
@@ -636,10 +808,15 @@ ipcMain.handle('excel:setColumns', async (event, cfg) => {
   if (cfg.gevolgCol && cfg.gevolgCol.trim()) {
     gevolgIdx = resolveColumn(sheet, state.range, cfg.gevolgCol, true);
   }
+  let refIdx = null;
+  if (cfg.refCol && cfg.refCol.trim()) {
+    refIdx = resolveColumn(sheet, state.range, cfg.refCol, true);
+  }
   state.urlColIdx = urlIdx;
   state.statusColIdx = statusIdx;
   state.commentColIdx = commentIdx;
   state.gevolgColIdx = gevolgIdx;
+  state.refColIdx = refIdx;
   resetWorkflowState();
 
   // Only touch the options sheet when a gevolg column is actually in use, so
@@ -667,6 +844,7 @@ ipcMain.handle('excel:setColumns', async (event, cfg) => {
     commentCol: cfg.commentCol || '',
     gevolgCol: cfg.gevolgCol || '',
     gevolgSheet: cfg.gevolgSheet || '',
+    refCol: cfg.refCol || '',
   });
   return moveToRow(startRow);
 });
@@ -793,54 +971,176 @@ ipcMain.handle('entries:saveComment', async (event, value) => {
   return true;
 });
 
-ipcMain.handle('entries:saveGevolg', async (event, selection) => {
-  // The selection is remembered even when there's nothing to write to, so the
-  // panel still carries over between entries if no column is configured.
-  state.gevolgSticky = (selection || []).map((s) => ({ label: s.label, text: s.text || '' }));
-  if (state.currentRow == null || state.currentRow === -1) return false;
-  if (state.gevolgColIdx == null) return false;
+// ---- IPC: capture window ---------------------------------------------
+// "Generate Report" no longer writes anything on its own. It opens a capture
+// window which crawls the site, offers the screenshots for selection, and
+// collects the agent name and gevolg measures. Only when that window's own
+// Generate button is pressed is the report written and the sheet updated.
 
-  const sheet = state.workbook.Sheets[state.sheetName];
-  const row = state.currentRow;
-  const value = formatGevolg(state.gevolgSticky);
-  const oldValue = cellValue(sheet, row, state.gevolgColIdx);
-  const oldStr = oldValue === undefined ? '' : String(oldValue);
-  if (oldStr === value) return false;
+let captureWindow = null;
 
-  setCell(sheet, row, state.gevolgColIdx, value);
-  saveWorkbook();
-  recordAction({ type: 'gevolg', row, colIdx: state.gevolgColIdx, oldValue: oldStr, newValue: value });
-  log(`Row ${row + 1}: gevolg saved (${state.gevolgSticky.length} measure(s)).`);
-  return true;
-});
+function captureProgress(payload) {
+  if (captureWindow && !captureWindow.isDestroyed()) {
+    captureWindow.webContents.send('capture-progress', payload);
+  }
+}
 
-ipcMain.handle('report:generate', async () => {
+ipcMain.handle('capture:open', async () => {
   if (state.currentRow == null || state.currentRow === -1) throw new Error('No current entry to report on');
   if (!state.templatePath) throw new Error('Select a report template first');
   if (!state.outputFolder) throw new Error('Select an output folder first');
+  if (captureWindow && !captureWindow.isDestroyed()) {
+    captureWindow.focus();
+    return true;
+  }
 
   const sheet = state.workbook.Sheets[state.sheetName];
   const row = state.currentRow;
-  const url = rowUrl(sheet, row);
+  state.capture = { row, url: rowUrl(sheet, row), shots: [], cancelled: false };
 
-  const image = await browserView.webContents.capturePage();
-  const size = image.getSize();
-  const screenshots = getScreenshotsForRow(row, url);
-  screenshots.push({ buffer: image.toPNG(), width: size.width, height: size.height });
+  captureWindow = new BrowserWindow({
+    width: 1280,
+    height: 900,
+    parent: mainWindow,
+    title: 'Generate Report',
+    backgroundColor: '#1b1b1d',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  captureWindow.setMenu(null);
+  captureWindow.loadFile('capture.html');
+  captureWindow.on('closed', () => {
+    captureWindow = null;
+    if (state.capture) state.capture.cancelled = true;
+  });
+  return true;
+});
 
-  // Whatever the sheet holds for this row, falling back to the selection
-  // carried over from the previous entry if this one hasn't been saved yet.
+// The capture window asks for its own context once it has loaded.
+ipcMain.handle('capture:context', async () => {
+  if (!state.capture) throw new Error('No capture in progress');
+  const sheet = state.workbook.Sheets[state.sheetName];
+  const row = state.capture.row;
+  const { reference, isNew } = referenceForRow(row);
+  const saved = loadSettings();
+
   const stored = state.gevolgColIdx != null ? cellValue(sheet, row, state.gevolgColIdx) : undefined;
-  const selection =
+  const gevolg =
     stored !== undefined && String(stored).trim() !== ''
       ? parseGevolgCell(stored)
-      : state.gevolgSticky;
+      : state.gevolgSticky.slice();
 
-  const outBuffer = writeReport(url, screenshots, selection);
+  return {
+    row,
+    url: state.capture.url,
+    rawUrl: String(cellValue(sheet, row, state.urlColIdx) ?? ''),
+    reference,
+    referenceIsNew: isNew,
+    gevolgEnabled: state.gevolgColIdx != null,
+    gevolgOptions: state.gevolgOptions,
+    gevolg,
+    agentNames: saved.agentNames && saved.agentNames.length ? saved.agentNames : DEFAULT_AGENT_NAMES,
+    agentName: saved.agentName || '',
+    bron: bronForRow(row),
+  };
+});
+
+ipcMain.handle('capture:run', async () => {
+  if (!state.capture) throw new Error('No capture in progress');
+  state.capture.shots = [];
+  const shots = await crawlAndCapture(state.capture.url, captureProgress);
+  if (!state.capture) return [];
+  state.capture.shots = shots;
+  captureProgress({ phase: 'done', shots: shots.length });
+  // Buffers stay in the main process; the window only needs the thumbnails.
+  return shots.map((s) => ({
+    id: s.id,
+    pageUrl: s.pageUrl,
+    slice: s.slice,
+    sliceCount: s.sliceCount,
+    thumb: s.thumb,
+    width: s.width,
+    height: s.height,
+  }));
+});
+
+// Full-resolution image for the fullscreen viewer.
+ipcMain.handle('capture:image', async (event, id) => {
+  if (!state.capture) return null;
+  const shot = state.capture.shots.find((s) => s.id === id);
+  return shot ? 'data:image/png;base64,' + shot.buffer.toString('base64') : null;
+});
+
+ipcMain.handle('capture:cancel', async () => {
+  if (state.capture) state.capture.cancelled = true;
+  if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close();
+  return true;
+});
+
+// This is the only place a report is written and the sheet updated.
+ipcMain.handle('capture:generate', async (event, payload) => {
+  if (!state.capture) throw new Error('No capture in progress');
+  const sheet = state.workbook.Sheets[state.sheetName];
+  const row = state.capture.row;
+  const url = state.capture.url;
+
+  const chosen = (payload.selectedIds || [])
+    .map((id) => state.capture.shots.find((s) => s.id === id))
+    .filter(Boolean);
+  if (chosen.length === 0) throw new Error('Select at least one screenshot');
+
+  const context = {
+    site: url,
+    refnr: payload.reference || '',
+    datum: payload.datum || new Date().toLocaleDateString('nl-BE'),
+    controleur: payload.agentName || '',
+    bron: payload.bron || '',
+    gevolg: payload.gevolg || [],
+  };
+
+  const outBuffer = writeReport(context, chosen);
   const outPath = reportPathFor(url);
   fs.writeFileSync(outPath, outBuffer);
-  log(`Row ${row + 1}: report saved with ${screenshots.length} screenshot(s): ${outPath}`);
-  return { outPath, screenshotCount: screenshots.length };
+  state.screenshotsByRow[row] = chosen.map((s) => ({
+    buffer: s.buffer,
+    width: s.width,
+    height: s.height,
+  }));
+
+  // Sheet writes happen only now, never while the capture window is open.
+  let wrote = [];
+  if (state.gevolgColIdx != null) {
+    const value = formatGevolg(payload.gevolg || []);
+    const old = cellValue(sheet, row, state.gevolgColIdx);
+    const oldStr = old === undefined ? '' : String(old);
+    if (oldStr !== value) {
+      setCell(sheet, row, state.gevolgColIdx, value);
+      recordAction({ type: 'gevolg', row, colIdx: state.gevolgColIdx, oldValue: oldStr, newValue: value });
+      wrote.push('gevolg');
+    }
+    state.gevolgSticky = (payload.gevolg || []).map((s) => ({ label: s.label, text: s.text || '' }));
+  }
+  if (state.refColIdx != null && context.refnr) {
+    const old = cellValue(sheet, row, state.refColIdx);
+    const oldStr = old === undefined ? '' : String(old);
+    if (oldStr !== context.refnr) {
+      setCell(sheet, row, state.refColIdx, context.refnr);
+      recordAction({ type: 'reference', row, colIdx: state.refColIdx, oldValue: oldStr, newValue: context.refnr });
+      wrote.push('reference');
+    }
+  }
+  if (wrote.length > 0) saveWorkbook();
+
+  saveSettings({ agentName: payload.agentName || '' });
+  log(`Row ${row + 1}: report ${context.refnr} saved with ${chosen.length} screenshot(s): ${outPath}`);
+  if (wrote.length > 0) log(`Row ${row + 1}: wrote ${wrote.join(' and ')} to the sheet.`);
+
+  if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close();
+  if (mainWindow) mainWindow.webContents.send('report-created', { row, outPath, reference: context.refnr });
+  return { outPath, screenshotCount: chosen.length, reference: context.refnr };
 });
 
 ipcMain.handle('report:delete', async () => {
