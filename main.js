@@ -174,8 +174,16 @@ function resolveColumn(sheet, range, spec, createIfMissing) {
   return -1;
 }
 
+// Excel represents a row filtered out by an AutoFilter as a hidden row, so
+// honouring the sheet's filter is just a matter of skipping hidden rows.
+function isRowHidden(sheet, r) {
+  const rows = sheet['!rows'];
+  return !!(rows && rows[r] && rows[r].hidden);
+}
+
 function findNextRow(sheet, range, urlCol, statusCol, startRow) {
   for (let r = startRow; r <= range.e.r; r++) {
+    if (isRowHidden(sheet, r)) continue;
     const url = cellValue(sheet, r, urlCol);
     const status = cellValue(sheet, r, statusCol);
     if (url !== undefined && String(url).trim() && (status === undefined || String(status).trim() === '')) {
@@ -183,6 +191,25 @@ function findNextRow(sheet, range, urlCol, statusCol, startRow) {
     }
   }
   return -1;
+}
+
+// Counts what's left to work through, for the message shown after Apply Columns.
+function countRows(sheet, range, urlCol, statusCol) {
+  let visible = 0;
+  let hidden = 0;
+  let pending = 0;
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const url = cellValue(sheet, r, urlCol);
+    if (url === undefined || !String(url).trim()) continue;
+    if (isRowHidden(sheet, r)) {
+      hidden += 1;
+      continue;
+    }
+    visible += 1;
+    const status = cellValue(sheet, r, statusCol);
+    if (status === undefined || String(status).trim() === '') pending += 1;
+  }
+  return { visible, hidden, pending };
 }
 
 // ---- Gevolg (follow-up measures) --------------------------------------
@@ -445,7 +472,10 @@ ipcMain.handle('dialog:openExcel', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const filePath = result.filePaths[0];
-  const workbook = XLSX.readFile(filePath);
+  // cellStyles is what makes SheetJS parse row properties, which is how a
+  // filtered-out row is represented (hidden="1"). Without it '!rows' is
+  // undefined and SiteWizard can't tell which rows the filter excludes.
+  const workbook = XLSX.readFile(filePath, { cellStyles: true });
   state.excelPath = filePath;
   state.workbook = workbook;
   return { filePath, sheetNames: workbook.SheetNames };
@@ -494,6 +524,13 @@ ipcMain.handle('excel:setColumns', async (event, cfg) => {
     if (opts.length === 0) {
       log(`Sheet "${state.gevolgSheetName}" has no options listed under its header row — the Gevolg panel will be empty.`);
     }
+  }
+
+  const counts = countRows(sheet, state.range, urlIdx, statusIdx);
+  if (counts.hidden > 0) {
+    log(`Sheet filter active: ${counts.hidden} row(s) filtered out and will be skipped, ${counts.visible} visible (${counts.pending} still without a status).`);
+  } else {
+    log(`${counts.visible} row(s) with a URL, ${counts.pending} still without a status.`);
   }
 
   const startRow = findNextRow(sheet, state.range, urlIdx, statusIdx, state.range.s.r + 1);

@@ -32,7 +32,15 @@ the project folder instead of using the terminal. It starts the app directly, an
    the matching field. **Gevolg options sheet** names the sheet holding the list of
    follow-up measures (see below); it defaults to `Gevolg opties`.
 3. **Apply Columns** — scans down from the header row and jumps to the first row that has
-   a URL but no status yet (so re-launching the app resumes where you left off).
+   a URL but no status yet (so re-launching the app resumes where you left off). The log
+   reports how many rows are in play.
+
+   **Filters are honoured.** If the sheet has an AutoFilter applied, rows the filter
+   excludes are skipped entirely — SiteWizard never navigates to them and never writes to
+   them. Filter the sheet in Excel first, save it, then load it here to work through just
+   that selection. Because Excel implements filtering by hiding rows, any row hidden by
+   hand is skipped the same way. Change the filter in Excel, save, then re-load the file
+   and press **Apply Columns** again to pick up the new selection.
 4. Browse the site normally in the embedded pane (it's a real Chromium view, not an
    iframe, so it isn't blocked by sites that refuse to be framed — you can click links,
    scroll, log in, etc.).
@@ -148,3 +156,5 @@ run via **Load Excel File…**.
   some formatting (e.g. conditional formatting, some styles) on save. Keep a backup of
   the source file if that matters.
 - The top row of the sheet's used range is assumed to be the header row.
+- Filter state is read when the file is loaded, not watched live. If you re-filter the
+  sheet in Excel while SiteWizard has it open, reload the file to pick up the change.
