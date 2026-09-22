@@ -43,6 +43,10 @@ const state = {
   gevolgSticky: [],
   currentRow: null, // 0-based sheet row index of the entry currently on screen
 
+  // <extLst> blocks captured from the source workbook, re-applied after
+  // every save (see restoreSheetExtensions).
+  preservedExtensions: {},
+
   templatePath: null,
   outputFolder: null,
 
@@ -120,6 +124,108 @@ app.on('window-all-closed', () => {
 
 function log(msg) {
   if (mainWindow) mainWindow.webContents.send('log', msg);
+}
+
+// ---- Preserving what SheetJS's writer drops ------------------------------
+// The community writer rebuilds each worksheet and loses the <extLst> block,
+// which is where Excel keeps x14 data validations — the dropdown lists whose
+// source range lives on another sheet. Losing those silently guts a workbook
+// that relies on them, so the blocks are captured when the file is opened and
+// put back after every save.
+
+function sheetFileMap(zip) {
+  const wbXml = zip.files['xl/workbook.xml'] && zip.files['xl/workbook.xml'].asText();
+  const relsXml =
+    zip.files['xl/_rels/workbook.xml.rels'] && zip.files['xl/_rels/workbook.xml.rels'].asText();
+  if (!wbXml || !relsXml) return {};
+
+  const rels = {};
+  for (const m of relsXml.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /Id="([^"]+)"/.exec(m[0]);
+    const target = /Target="([^"]+)"/.exec(m[0]);
+    if (id && target) rels[id[1]] = target[1].replace(/^\/?(xl\/)?/, 'xl/');
+  }
+
+  const map = {};
+  for (const m of wbXml.matchAll(/<sheet\b[^>]*>/g)) {
+    const name = /name="([^"]+)"/.exec(m[0]);
+    const rid = /r:id="([^"]+)"/.exec(m[0]);
+    if (name && rid && rels[rid[1]]) {
+      map[decodeXml(name[1])] = rels[rid[1]];
+    }
+  }
+  return map;
+}
+
+function decodeXml(s) {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+// Returns { sheetName: '<extLst>…</extLst>' } for sheets that have one.
+function captureSheetExtensions(buffer) {
+  const out = {};
+  try {
+    const zip = new PizZip(buffer);
+    const map = sheetFileMap(zip);
+    for (const [name, file] of Object.entries(map)) {
+      const entry = zip.files[file];
+      if (!entry) continue;
+      const xml = entry.asText();
+      const end = xml.lastIndexOf('</extLst>');
+      if (end === -1) continue;
+      const start = xml.lastIndexOf('<extLst>', end);
+      if (start === -1) continue;
+      // Only keep it if it's the worksheet-level block (nothing but whitespace
+      // and the closing tag after it).
+      const tail = xml.slice(end + '</extLst>'.length);
+      if (!/^\s*<\/worksheet>\s*$/.test(tail)) continue;
+      const block = xml.slice(start, end + '</extLst>'.length);
+      if (!block.includes('x14:dataValidation')) continue;
+      // xr:uid attributes reference a namespace SheetJS's <worksheet> element
+      // won't declare; they're only revision ids, so drop them.
+      out[name] = block.replace(/\sxr:uid="[^"]*"/g, '');
+    }
+  } catch (err) {
+    log('Could not read workbook extensions: ' + err.message);
+  }
+  return out;
+}
+
+function restoreSheetExtensions(filePath, preserved) {
+  const names = Object.keys(preserved || {});
+  if (names.length === 0) return;
+  try {
+    const zip = new PizZip(fs.readFileSync(filePath));
+    const map = sheetFileMap(zip);
+    let changed = 0;
+    for (const name of names) {
+      const file = map[name];
+      const entry = file && zip.files[file];
+      if (!entry) continue;
+      let xml = entry.asText();
+      if (xml.includes('x14:dataValidation')) continue; // already there
+      if (!xml.includes('</worksheet>')) continue;
+      xml = xml.replace('</worksheet>', preserved[name] + '</worksheet>');
+      zip.file(file, xml);
+      changed += 1;
+    }
+    if (changed > 0) {
+      fs.writeFileSync(filePath, zip.generate({ type: 'nodebuffer' }));
+    }
+  } catch (err) {
+    log('Could not restore workbook extensions: ' + err.message);
+  }
+}
+
+// Every write to the source workbook goes through here.
+function saveWorkbook() {
+  XLSX.writeFile(state.workbook, state.excelPath);
+  restoreSheetExtensions(state.excelPath, state.preservedExtensions);
 }
 
 // ---- Excel helpers -------------------------------------------------------
@@ -234,7 +340,7 @@ function loadGevolgOptions(sheetName) {
     const rows = [[name], ...DEFAULT_GEVOLG_OPTIONS.map((o) => [o])];
     sheet = XLSX.utils.aoa_to_sheet(rows);
     XLSX.utils.book_append_sheet(state.workbook, sheet, name);
-    XLSX.writeFile(state.workbook, state.excelPath);
+    saveWorkbook();
     log(`Created sheet "${name}" with ${DEFAULT_GEVOLG_OPTIONS.length} default options. Edit it in Excel to change the list.`);
   }
 
@@ -478,6 +584,11 @@ ipcMain.handle('dialog:openExcel', async () => {
   const workbook = XLSX.readFile(filePath, { cellStyles: true });
   state.excelPath = filePath;
   state.workbook = workbook;
+  state.preservedExtensions = captureSheetExtensions(fs.readFileSync(filePath));
+  const extSheets = Object.keys(state.preservedExtensions);
+  if (extSheets.length > 0) {
+    log(`Preserving dropdown lists on sheet(s): ${extSheets.join(', ')}.`);
+  }
   return { filePath, sheetNames: workbook.SheetNames };
 });
 
@@ -598,7 +709,7 @@ ipcMain.handle('entries:markStatus', async (event, status) => {
   const oldValue = cellValue(sheet, row, state.statusColIdx);
   const oldStr = oldValue === undefined ? '' : String(oldValue);
   setCell(sheet, row, state.statusColIdx, status);
-  XLSX.writeFile(state.workbook, state.excelPath);
+  saveWorkbook();
   recordAction({ type: 'status', row, colIdx: state.statusColIdx, oldValue: oldStr, newValue: status });
   log(`Row ${row + 1}: marked "${status}" and saved.`);
   const nextRow = findNextRow(sheet, state.range, state.urlColIdx, state.statusColIdx, row + 1);
@@ -630,7 +741,7 @@ ipcMain.handle('entries:undo', async () => {
   const action = state.actionLog[state.actionPos];
   const sheet = state.workbook.Sheets[state.sheetName];
   setCell(sheet, action.row, action.colIdx, action.oldValue);
-  XLSX.writeFile(state.workbook, state.excelPath);
+  saveWorkbook();
   state.actionPos -= 1;
   state.currentRow = action.row;
   navigateBrowserView(String(cellValue(sheet, action.row, state.urlColIdx)));
@@ -644,7 +755,7 @@ ipcMain.handle('entries:redo', async () => {
   const action = state.actionLog[state.actionPos];
   const sheet = state.workbook.Sheets[state.sheetName];
   setCell(sheet, action.row, action.colIdx, action.newValue);
-  XLSX.writeFile(state.workbook, state.excelPath);
+  saveWorkbook();
   state.currentRow = action.row;
   navigateBrowserView(String(cellValue(sheet, action.row, state.urlColIdx)));
   log(`Row ${action.row + 1}: redid ${action.type} change.`);
@@ -660,7 +771,7 @@ ipcMain.handle('entries:saveComment', async (event, value) => {
   const oldStr = oldValue === undefined ? '' : String(oldValue);
   if (oldStr === value) return false;
   setCell(sheet, row, state.commentColIdx, value);
-  XLSX.writeFile(state.workbook, state.excelPath);
+  saveWorkbook();
   recordAction({ type: 'comment', row, colIdx: state.commentColIdx, oldValue: oldStr, newValue: value });
   log(`Row ${row + 1}: comment saved.`);
   return true;
@@ -681,7 +792,7 @@ ipcMain.handle('entries:saveGevolg', async (event, selection) => {
   if (oldStr === value) return false;
 
   setCell(sheet, row, state.gevolgColIdx, value);
-  XLSX.writeFile(state.workbook, state.excelPath);
+  saveWorkbook();
   recordAction({ type: 'gevolg', row, colIdx: state.gevolgColIdx, oldValue: oldStr, newValue: value });
   log(`Row ${row + 1}: gevolg saved (${state.gevolgSticky.length} measure(s)).`);
   return true;

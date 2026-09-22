@@ -155,6 +155,13 @@ run via **Load Excel File…**.
   are left alone, but SheetJS's free/community engine still has limited fidelity for
   some formatting (e.g. conditional formatting, some styles) on save. Keep a backup of
   the source file if that matters.
+- Dropdown lists whose source range sits on another sheet are stored by Excel as x14
+  data validations inside a worksheet's `<extLst>`, which SheetJS's writer drops.
+  SiteWizard captures those blocks when the file is opened and puts them back after
+  every save, so the dropdowns survive. Parts it does **not** restore, because they are
+  metadata rather than sheet content: `customXml/*` (Office/SharePoint document
+  properties), `xl/printerSettings` (page setup) and `xl/featurePropertyBag`. If a
+  workbook depends on those, work on a copy.
 - The top row of the sheet's used range is assumed to be the header row.
 - Filter state is read when the file is loaded, not watched live. If you re-filter the
   sheet in Excel while SiteWizard has it open, reload the file to pick up the change.
