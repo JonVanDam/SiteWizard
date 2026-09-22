@@ -388,6 +388,22 @@ function formatGevolg(selection) {
     .join(GEVOLG_SEPARATOR);
 }
 
+// A Url cell often lists a site together with its mirrors, e.g.
+// "winbeast.com + winbeast1.com". Only the first entry is browsed and
+// reported on; the rest are left in the sheet untouched.
+function primaryUrl(raw) {
+  if (raw === undefined || raw === null) return '';
+  const parts = String(raw)
+    .split(/[+,;\n\r]| {2,}/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts[0] || '';
+}
+
+function rowUrl(sheet, row) {
+  return primaryUrl(cellValue(sheet, row, state.urlColIdx));
+}
+
 function navigateBrowserView(url) {
   let target = url;
   if (!/^https?:\/\//i.test(target)) {
@@ -525,7 +541,7 @@ function buildEntryInfo(row) {
     return { done: true, canUndo, canRedo, canPrevious };
   }
   const sheet = state.workbook.Sheets[state.sheetName];
-  const url = String(cellValue(sheet, row, state.urlColIdx));
+  const url = rowUrl(sheet, row);
   const commentEnabled = state.commentColIdx != null;
   const comment = commentEnabled ? cellValue(sheet, row, state.commentColIdx) : undefined;
   const hasReport = !!(state.outputFolder && fs.existsSync(reportPathFor(url)));
@@ -565,7 +581,7 @@ function moveToRow(row) {
     state.historyPos = state.history.length - 1;
   }
   state.currentRow = isValid ? row : null;
-  navigateBrowserView(isValid ? String(cellValue(state.workbook.Sheets[state.sheetName], row, state.urlColIdx)) : 'about:blank');
+  navigateBrowserView(isValid ? rowUrl(state.workbook.Sheets[state.sheetName], row) : 'about:blank');
   return buildEntryInfo(state.currentRow);
 }
 
@@ -731,7 +747,7 @@ ipcMain.handle('entries:previous', async () => {
   const row = state.history[state.historyPos];
   state.currentRow = row;
   const sheet = state.workbook.Sheets[state.sheetName];
-  navigateBrowserView(String(cellValue(sheet, row, state.urlColIdx)));
+  navigateBrowserView(rowUrl(sheet, row));
   log(`Row ${row + 1}: viewing previous entry.`);
   return buildEntryInfo(row);
 });
@@ -744,7 +760,7 @@ ipcMain.handle('entries:undo', async () => {
   saveWorkbook();
   state.actionPos -= 1;
   state.currentRow = action.row;
-  navigateBrowserView(String(cellValue(sheet, action.row, state.urlColIdx)));
+  navigateBrowserView(rowUrl(sheet, action.row));
   log(`Row ${action.row + 1}: undid ${action.type} change.`);
   return buildEntryInfo(action.row);
 });
@@ -757,7 +773,7 @@ ipcMain.handle('entries:redo', async () => {
   setCell(sheet, action.row, action.colIdx, action.newValue);
   saveWorkbook();
   state.currentRow = action.row;
-  navigateBrowserView(String(cellValue(sheet, action.row, state.urlColIdx)));
+  navigateBrowserView(rowUrl(sheet, action.row));
   log(`Row ${action.row + 1}: redid ${action.type} change.`);
   return buildEntryInfo(action.row);
 });
@@ -805,7 +821,7 @@ ipcMain.handle('report:generate', async () => {
 
   const sheet = state.workbook.Sheets[state.sheetName];
   const row = state.currentRow;
-  const url = String(cellValue(sheet, row, state.urlColIdx));
+  const url = rowUrl(sheet, row);
 
   const image = await browserView.webContents.capturePage();
   const size = image.getSize();
@@ -832,7 +848,7 @@ ipcMain.handle('report:delete', async () => {
   if (!state.outputFolder) throw new Error('No output folder selected');
   const sheet = state.workbook.Sheets[state.sheetName];
   const row = state.currentRow;
-  const url = String(cellValue(sheet, row, state.urlColIdx));
+  const url = rowUrl(sheet, row);
   const outPath = reportPathFor(url);
   if (fs.existsSync(outPath)) {
     fs.unlinkSync(outPath);

@@ -41,6 +41,11 @@ the project folder instead of using the terminal. It starts the app directly, an
    that selection. Because Excel implements filtering by hiding rows, any row hidden by
    hand is skipped the same way. Change the filter in Excel, save, then re-load the file
    and press **Apply Columns** again to pick up the new selection.
+   **Cells listing more than one site.** Where a URL cell holds a site plus its
+   mirrors (`winbeast.com + winbeast1.com`), only the first is opened and reported on.
+   Separators recognised are `+`, `,`, `;`, line breaks and runs of spaces. The cell
+   itself is never rewritten, so the other URLs stay in the sheet.
+
 4. Browse the site normally in the embedded pane (it's a real Chromium view, not an
    iframe, so it isn't blocked by sites that refuse to be framed — you can click links,
    scroll, log in, etc.).
