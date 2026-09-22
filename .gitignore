@@ -21,3 +21,6 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local working data (internal / not for publication)
+.data/
