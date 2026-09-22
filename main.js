@@ -9,6 +9,23 @@ const ImageModule = require('docxtemplater-image-module-free');
 let mainWindow;
 let browserView;
 
+// Seeded into the Gevolg options sheet the first time it has to be created.
+// After that the sheet is the source of truth and can be edited in Excel.
+const DEFAULT_GEVOLG_OPTIONS = [
+  'Geen verder gevolg',
+  'Toevoeging zwarte lijst (website + mirrors) + kennisgeving ISP’s',
+  'Melding aan DNS BELGIUM',
+  'Opstellen PV en doorsturen aan parket',
+  'Doorsturen naar dienst controle & compliance voor verwijdering reclame (META)',
+  'Doorsturen naar andere dienst :',
+  'Andere :',
+];
+const DEFAULT_GEVOLG_SHEET = 'Gevolg opties';
+const GEVOLG_SEPARATOR = ' | ';
+// Word's "click here to enter text" prompt, carried over when options are
+// pasted out of the report template. Stripped so only the label remains.
+const GEVOLG_PROMPT = /klik of tik om tekst in te voeren\.?\s*$/i;
+
 // Everything SiteWizard currently has loaded / is working through.
 const state = {
   excelPath: null,
@@ -18,6 +35,12 @@ const state = {
   urlColIdx: null,
   statusColIdx: null,
   commentColIdx: null, // null if no comment column configured
+  gevolgColIdx: null, // null if no gevolg column configured
+  gevolgOptions: [], // [{label, needsText}] read from the options sheet
+  gevolgSheetName: null,
+  // Last selection the user confirmed, carried to the next entry as a
+  // pre-fill so a run of sites getting the same measures is quick to mark.
+  gevolgSticky: [],
   currentRow: null, // 0-based sheet row index of the entry currently on screen
 
   templatePath: null,
@@ -162,6 +185,76 @@ function findNextRow(sheet, range, urlCol, statusCol, startRow) {
   return -1;
 }
 
+// ---- Gevolg (follow-up measures) --------------------------------------
+// The option list lives in its own sheet in the loaded workbook so it can be
+// maintained in Excel rather than in code. If that sheet isn't there yet it
+// is created and seeded with DEFAULT_GEVOLG_OPTIONS, so a workbook that has
+// never been used with SiteWizard still works on first run.
+
+// An option whose label ends in ":" expects free text after it, e.g.
+// "Andere :" becomes "Andere : <what the user typed>".
+function parseGevolgOption(raw) {
+  const label = String(raw).replace(GEVOLG_PROMPT, '').trim();
+  if (!label) return null;
+  return { label, needsText: /:\s*$/.test(label) };
+}
+
+function loadGevolgOptions(sheetName) {
+  const name = (sheetName || '').trim() || DEFAULT_GEVOLG_SHEET;
+  let sheet = state.workbook.Sheets[name];
+
+  if (!sheet) {
+    const rows = [[name], ...DEFAULT_GEVOLG_OPTIONS.map((o) => [o])];
+    sheet = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(state.workbook, sheet, name);
+    XLSX.writeFile(state.workbook, state.excelPath);
+    log(`Created sheet "${name}" with ${DEFAULT_GEVOLG_OPTIONS.length} default options. Edit it in Excel to change the list.`);
+  }
+
+  const options = [];
+  if (sheet['!ref']) {
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    // Row 1 is the header; options run down the first column from row 2.
+    for (let r = range.s.r + 1; r <= range.e.r; r++) {
+      const v = cellValue(sheet, r, range.s.c);
+      if (v === undefined || !String(v).trim()) continue;
+      const opt = parseGevolgOption(v);
+      if (opt) options.push(opt);
+    }
+  }
+  state.gevolgSheetName = name;
+  state.gevolgOptions = options;
+  return options;
+}
+
+// Turns a stored cell back into a selection. Values that no longer match any
+// option are kept as-is rather than dropped, so editing the options sheet
+// can't silently erase decisions already recorded in the sheet.
+function parseGevolgCell(value) {
+  if (value === undefined || value === null) return [];
+  return String(value)
+    .split('|')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((piece) => {
+      for (const opt of state.gevolgOptions) {
+        if (opt.needsText && piece.startsWith(opt.label)) {
+          return { label: opt.label, text: piece.slice(opt.label.length).trim() };
+        }
+        if (!opt.needsText && piece === opt.label) {
+          return { label: opt.label, text: '' };
+        }
+      }
+      return { label: piece, text: '' };
+    });
+}
+
+function formatGevolg(selection) {
+  return (selection || [])
+    .map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label))
+    .join(GEVOLG_SEPARATOR);
+}
+
 function navigateBrowserView(url) {
   let target = url;
   if (!/^https?:\/\//i.test(target)) {
@@ -178,6 +271,7 @@ function resetWorkflowState() {
   state.actionLog = [];
   state.actionPos = -1;
   state.screenshotsByRow = {};
+  state.gevolgSticky = [];
 }
 
 function recordAction(action) {
@@ -228,7 +322,28 @@ function getScreenshotsForRow(row, url) {
   return state.screenshotsByRow[row];
 }
 
-function writeReport(url, screenshots) {
+// Builds the gevolg-related tag values for the template. Three shapes are
+// offered so a template can show the measures as a list, as one line, or as a
+// full tick-box checklist mirroring the paper form:
+//   {#gevolg}{.}{/gevolg}                  -> only the selected measures
+//   {gevolgText}                           -> selected measures on one line
+//   {#gevolgAll}{mark} {label}{/gevolgAll} -> every option, ticked or not
+function gevolgTagValues(selection) {
+  const chosen = (selection || []).map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label));
+  const chosenLabels = new Set((selection || []).map((s) => s.label));
+  const all = state.gevolgOptions.map((opt) => {
+    const hit = (selection || []).find((s) => s.label === opt.label);
+    const checked = chosenLabels.has(opt.label);
+    return {
+      label: hit && hit.text ? `${opt.label} ${hit.text}`.trim() : opt.label,
+      checked,
+      mark: checked ? '☒' : '☐',
+    };
+  });
+  return { gevolg: chosen, gevolgText: chosen.join(GEVOLG_SEPARATOR), gevolgAll: all };
+}
+
+function writeReport(url, screenshots, selection) {
   const content = fs.readFileSync(state.templatePath, 'binary');
   const zip = new PizZip(content);
   const maxWidth = 600;
@@ -251,7 +366,11 @@ function writeReport(url, screenshots) {
   });
 
   try {
-    doc.render({ site: url, screenshots: screenshots.map((_, i) => i + 1) });
+    doc.render({
+      site: url,
+      screenshots: screenshots.map((_, i) => i + 1),
+      ...gevolgTagValues(selection),
+    });
   } catch (err) {
     throw new Error(
       'Failed to fill in the report template. If your template still has a single ' +
@@ -277,6 +396,14 @@ function buildEntryInfo(row) {
   const commentEnabled = state.commentColIdx != null;
   const comment = commentEnabled ? cellValue(sheet, row, state.commentColIdx) : undefined;
   const hasReport = !!(state.outputFolder && fs.existsSync(reportPathFor(url)));
+
+  // A row that already has measures recorded always wins; only a blank one
+  // inherits the previous entry's selection as a pre-fill.
+  const gevolgEnabled = state.gevolgColIdx != null;
+  const stored = gevolgEnabled ? cellValue(sheet, row, state.gevolgColIdx) : undefined;
+  const hasStored = stored !== undefined && String(stored).trim() !== '';
+  const gevolg = hasStored ? parseGevolgCell(stored) : state.gevolgSticky.slice();
+
   return {
     done: false,
     row,
@@ -284,6 +411,10 @@ function buildEntryInfo(row) {
     comment: comment == null ? '' : String(comment),
     commentEnabled,
     hasReport,
+    gevolgEnabled,
+    gevolgOptions: state.gevolgOptions,
+    gevolg,
+    gevolgPrefilled: !hasStored && gevolg.length > 0,
     canUndo,
     canRedo,
     canPrevious,
@@ -344,12 +475,35 @@ ipcMain.handle('excel:setColumns', async (event, cfg) => {
   if (cfg.commentCol && cfg.commentCol.trim()) {
     commentIdx = resolveColumn(sheet, state.range, cfg.commentCol, true);
   }
+  let gevolgIdx = null;
+  if (cfg.gevolgCol && cfg.gevolgCol.trim()) {
+    gevolgIdx = resolveColumn(sheet, state.range, cfg.gevolgCol, true);
+  }
   state.urlColIdx = urlIdx;
   state.statusColIdx = statusIdx;
   state.commentColIdx = commentIdx;
+  state.gevolgColIdx = gevolgIdx;
   resetWorkflowState();
+
+  // Only touch the options sheet when a gevolg column is actually in use, so
+  // workbooks that don't need the feature aren't modified at all.
+  state.gevolgOptions = [];
+  state.gevolgSheetName = null;
+  if (gevolgIdx != null) {
+    const opts = loadGevolgOptions(cfg.gevolgSheet);
+    if (opts.length === 0) {
+      log(`Sheet "${state.gevolgSheetName}" has no options listed under its header row — the Gevolg panel will be empty.`);
+    }
+  }
+
   const startRow = findNextRow(sheet, state.range, urlIdx, statusIdx, state.range.s.r + 1);
-  saveSettings({ urlCol: cfg.urlCol, statusCol: cfg.statusCol, commentCol: cfg.commentCol || '' });
+  saveSettings({
+    urlCol: cfg.urlCol,
+    statusCol: cfg.statusCol,
+    commentCol: cfg.commentCol || '',
+    gevolgCol: cfg.gevolgCol || '',
+    gevolgSheet: cfg.gevolgSheet || '',
+  });
   return moveToRow(startRow);
 });
 
@@ -475,6 +629,27 @@ ipcMain.handle('entries:saveComment', async (event, value) => {
   return true;
 });
 
+ipcMain.handle('entries:saveGevolg', async (event, selection) => {
+  // The selection is remembered even when there's nothing to write to, so the
+  // panel still carries over between entries if no column is configured.
+  state.gevolgSticky = (selection || []).map((s) => ({ label: s.label, text: s.text || '' }));
+  if (state.currentRow == null || state.currentRow === -1) return false;
+  if (state.gevolgColIdx == null) return false;
+
+  const sheet = state.workbook.Sheets[state.sheetName];
+  const row = state.currentRow;
+  const value = formatGevolg(state.gevolgSticky);
+  const oldValue = cellValue(sheet, row, state.gevolgColIdx);
+  const oldStr = oldValue === undefined ? '' : String(oldValue);
+  if (oldStr === value) return false;
+
+  setCell(sheet, row, state.gevolgColIdx, value);
+  XLSX.writeFile(state.workbook, state.excelPath);
+  recordAction({ type: 'gevolg', row, colIdx: state.gevolgColIdx, oldValue: oldStr, newValue: value });
+  log(`Row ${row + 1}: gevolg saved (${state.gevolgSticky.length} measure(s)).`);
+  return true;
+});
+
 ipcMain.handle('report:generate', async () => {
   if (state.currentRow == null || state.currentRow === -1) throw new Error('No current entry to report on');
   if (!state.templatePath) throw new Error('Select a report template first');
@@ -489,7 +664,15 @@ ipcMain.handle('report:generate', async () => {
   const screenshots = getScreenshotsForRow(row, url);
   screenshots.push({ buffer: image.toPNG(), width: size.width, height: size.height });
 
-  const outBuffer = writeReport(url, screenshots);
+  // Whatever the sheet holds for this row, falling back to the selection
+  // carried over from the previous entry if this one hasn't been saved yet.
+  const stored = state.gevolgColIdx != null ? cellValue(sheet, row, state.gevolgColIdx) : undefined;
+  const selection =
+    stored !== undefined && String(stored).trim() !== ''
+      ? parseGevolgCell(stored)
+      : state.gevolgSticky;
+
+  const outBuffer = writeReport(url, screenshots, selection);
   const outPath = reportPathFor(url);
   fs.writeFileSync(outPath, outBuffer);
   log(`Row ${row + 1}: report saved with ${screenshots.length} screenshot(s): ${outPath}`);

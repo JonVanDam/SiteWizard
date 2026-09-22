@@ -20,6 +20,12 @@
     <label>Comment column (optional)
       <input id="commentCol" type="text" placeholder="e.g. Comment, E, or 5" size="14" />
     </label>
+    <label>Gevolg column (optional)
+      <input id="gevolgCol" type="text" placeholder="e.g. Gevolg, F, or 6" size="14" />
+    </label>
+    <label>Gevolg options sheet
+      <input id="gevolgSheet" type="text" placeholder="Gevolg opties" size="14" />
+    </label>
     <button id="applyBtn">Apply Columns</button>
 
     <span class="sep"></span>
@@ -41,6 +47,15 @@
   <div id="commentBar">
     <label for="commentField">Comment</label>
     <textarea id="commentField" rows="2" disabled placeholder="(select a comment column to enable)"></textarea>
+  </div>
+
+  <div id="gevolgBar">
+    <div id="gevolgHeader">
+      <button id="gevolgToggle" disabled aria-expanded="false">Gevolg <span id="gevolgCaret">&#9662;</span></button>
+      <span id="gevolgSummary">(select a gevolg column to enable)</span>
+      <button id="gevolgClearBtn" class="linkBtn" disabled>Clear all</button>
+    </div>
+    <div id="gevolgPanel" hidden></div>
   </div>
 
   <div id="bvContainer"></div>

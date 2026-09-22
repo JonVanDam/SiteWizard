@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('api', {
   undo: () => ipcRenderer.invoke('entries:undo'),
   redo: () => ipcRenderer.invoke('entries:redo'),
   saveComment: (value) => ipcRenderer.invoke('entries:saveComment', value),
+  saveGevolg: (selection) => ipcRenderer.invoke('entries:saveGevolg', selection),
 
   generateReport: () => ipcRenderer.invoke('report:generate'),
   deleteReport: () => ipcRenderer.invoke('report:delete'),

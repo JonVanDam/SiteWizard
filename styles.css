@@ -31,6 +31,55 @@ html, body { height: 100%; margin: 0; display: flex; flex-direction: column; }
 #commentBar label { padding-top: 4px; white-space: nowrap; }
 #commentField { flex: 1; resize: vertical; font-family: inherit; font-size: 13px; padding: 4px 6px; }
 
+/* The embedded BrowserView always paints on top of this page, so the gevolg
+   panel must not float over #bvContainer — it would be invisible. Instead it
+   sits in normal flow and shrinks the browser area when it opens. */
+#gevolgBar {
+  background: #f3f3f3;
+  border-bottom: 1px solid #ccc;
+  padding: 6px 10px;
+}
+#gevolgHeader { display: flex; align-items: center; gap: 10px; }
+#gevolgToggle { padding: 4px 10px; cursor: pointer; }
+#gevolgToggle:disabled { cursor: default; }
+#gevolgSummary {
+  flex: 1;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#gevolgSummary.prefilled { color: #0b5ed7; font-style: italic; }
+#gevolgSummary.empty { color: #777; }
+.linkBtn {
+  background: none;
+  border: none;
+  color: #0b5ed7;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 4px;
+}
+.linkBtn:disabled { color: #999; cursor: default; text-decoration: none; }
+
+#gevolgPanel {
+  margin-top: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #ccc;
+  background: #fff;
+  padding: 6px 8px;
+}
+.gevolgRow { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; }
+.gevolgRow label { display: flex; align-items: flex-start; gap: 6px; flex: 1; cursor: pointer; }
+.gevolgRow input[type="checkbox"] { margin-top: 2px; }
+.gevolgRow .freeText {
+  flex: 1;
+  min-width: 140px;
+  padding: 3px 5px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
 #bvContainer { flex: 1; min-height: 0; background: #fff; }
 
 #actions button { padding: 8px 16px; }
