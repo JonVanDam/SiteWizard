@@ -13,6 +13,13 @@ npm install
 npm start
 ```
 
+### Launching it later
+
+Once the first `npm install` has run, you can just **double-click `SiteWizard.bat`** in
+the project folder instead of using the terminal. It starts the app directly, and if
+`node_modules` is missing it runs `npm install` for you first. Right-click it and choose
+*Send to > Desktop (create shortcut)* if you want it somewhere handier.
+
 ## Using it
 
 1. **Load Excel File…** — pick the source `.xlsx`/`.xls`. Pick a sheet from the dropdown
