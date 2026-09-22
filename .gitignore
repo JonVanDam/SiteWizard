@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+out/
+
+# Generated reports / screenshots
+test-data/output/*
+!test-data/output/.gitkeep
+
+# Electron per-user settings (normally lives in app data, ignored here just in case)
+sitewizard-settings.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

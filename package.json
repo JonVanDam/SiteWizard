@@ -1,0 +1,19 @@
+{
+  "name": "sitewizard",
+  "version": "1.0.0",
+  "description": "Browse flagged sites from an Excel column, mark them, and generate Word screenshot reports.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "docxtemplater": "^3.50.0",
+    "docxtemplater-image-module-free": "^1.1.1",
+    "pizzip": "^3.1.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}

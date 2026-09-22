@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SiteWizard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="setup">
+    <button id="loadExcelBtn">Load Excel File…</button>
+    <label>Sheet
+      <select id="sheetSelect"></select>
+    </label>
+    <label>URL column
+      <input id="urlCol" type="text" placeholder="e.g. URL, B, or 2" size="10" />
+    </label>
+    <label>Status column
+      <input id="statusCol" type="text" placeholder="e.g. Status, D, or 4" size="10" />
+    </label>
+    <label>Comment column (optional)
+      <input id="commentCol" type="text" placeholder="e.g. Comment, E, or 5" size="14" />
+    </label>
+    <button id="applyBtn">Apply Columns</button>
+
+    <span class="sep"></span>
+
+    <button id="templateBtn">Select Report Template…</button>
+    <span id="templatePath" class="pathLabel">(none)</span>
+    <button id="outputBtn">Select Output Folder…</button>
+    <span id="outputPath" class="pathLabel">(none)</span>
+  </div>
+
+  <div id="navbar">
+    <button id="backBtn">&larr;</button>
+    <button id="forwardBtn">&rarr;</button>
+    <button id="reloadBtn">&#8635;</button>
+    <input id="addressBar" type="text" readonly />
+    <span id="currentInfo">No entry loaded.</span>
+  </div>
+
+  <div id="commentBar">
+    <label for="commentField">Comment</label>
+    <textarea id="commentField" rows="2" disabled placeholder="(select a comment column to enable)"></textarea>
+  </div>
+
+  <div id="bvContainer"></div>
+
+  <div id="actions">
+    <button id="undoBtn" disabled title="Undo last change">&#8630; Undo</button>
+    <button id="redoBtn" disabled title="Redo">Redo &#8631;</button>
+
+    <span class="divider"></span>
+
+    <button id="generateBtn" disabled>Generate Report</button>
+    <button id="deleteReportBtn" disabled>Delete Report</button>
+
+    <span class="divider"></span>
+
+    <button id="falsePositiveBtn" disabled>False Positive</button>
+    <button id="notSureBtn" disabled>Not Sure</button>
+
+    <span class="divider"></span>
+
+    <button id="prevBtn" class="narrowBtn" disabled title="Previous entry">&larr;</button>
+    <button id="skipBtn" disabled>&rarr; Skip</button>
+  </div>
+
+  <div id="log"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

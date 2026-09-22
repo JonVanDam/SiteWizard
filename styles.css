@@ -1,0 +1,53 @@
+* { box-sizing: border-box; font-family: Segoe UI, sans-serif; font-size: 13px; }
+html, body { height: 100%; margin: 0; display: flex; flex-direction: column; }
+
+#setup, #navbar, #actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #ccc;
+  flex-wrap: wrap;
+}
+
+#actions { border-top: 1px solid #ccc; border-bottom: none; }
+
+.sep { flex-basis: 100%; height: 0; }
+.divider { width: 1px; align-self: stretch; background: #ccc; margin: 2px 4px; }
+.pathLabel { color: #555; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#addressBar { flex: 1; padding: 4px 6px; }
+#currentInfo { white-space: nowrap; color: #333; }
+
+#commentBar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #ccc;
+}
+#commentBar label { padding-top: 4px; white-space: nowrap; }
+#commentField { flex: 1; resize: vertical; font-family: inherit; font-size: 13px; padding: 4px 6px; }
+
+#bvContainer { flex: 1; min-height: 0; background: #fff; }
+
+#actions button { padding: 8px 16px; }
+#actions button.narrowBtn { padding: 8px 10px; }
+#falsePositiveBtn { background: #f8d7da; }
+#notSureBtn { background: #fff3cd; }
+#skipBtn, #prevBtn { background: #e2e3e5; }
+#generateBtn { background: #cfe2ff; }
+#deleteReportBtn { background: #f5c2c7; }
+#undoBtn, #redoBtn { background: #e9ecef; }
+
+#log {
+  height: 110px;
+  overflow-y: auto;
+  background: #111;
+  color: #ddd;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  padding: 6px 10px;
+}
