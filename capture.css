@@ -48,15 +48,6 @@ body.capture {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border-soft);
 }
-#progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
-#progressText {
-  color: var(--text-muted);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 420px;
-}
 
 #shotList {
   flex: 1;
@@ -130,17 +121,17 @@ body.capture {
 #capSide .field.grow { flex: 1; min-height: 0; }
 #capSide label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
 
-#gevolgPanel {
-  flex: 1;
-  min-height: 120px;
+.checkPanel {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   padding: 8px;
 }
-.gevolgRow { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
-.gevolgRow label {
+#gevolgPanel { flex: 1; min-height: 110px; }
+#inbreukPanel { flex: none; }
+.checkRow { display: flex; flex-direction: column; gap: 5px; padding: 4px 0; }
+.checkRow label {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -152,8 +143,8 @@ body.capture {
   color: var(--text);
   line-height: 1.4;
 }
-.gevolgRow input[type="checkbox"] { margin-top: 2px; flex: none; }
-.gevolgRow .freeText { margin-left: 22px; width: calc(100% - 22px); font-size: 12px; }
+.checkRow input[type="checkbox"] { margin-top: 2px; flex: none; }
+.checkRow .freeText { margin-left: 22px; width: calc(100% - 22px); font-size: 12px; }
 
 #gevolgSummary { line-height: 1.5; }
 
@@ -195,4 +186,15 @@ body.capture {
   background: #fff;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
+}
+
+/* ---- narrow windows (side-by-side use) ---- */
+
+@media (max-width: 900px) {
+  #capMain { flex-direction: column; }
+  #capSide { width: auto; border-left: none; border-top: 1px solid var(--border-soft); }
+  #capSide .field.grow { flex: none; }
+  #gevolgPanel { max-height: 150px; }
+  #shotPane { min-height: 220px; }
+  #capSite { max-width: 100%; white-space: normal; }
 }

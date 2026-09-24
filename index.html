@@ -54,12 +54,25 @@
               <span class="slotValue empty">optional</span>
               <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
             </div>
+            <div class="slot" data-slot="inbreukCol">
+              <span class="slotName">Infractions</span>
+              <span class="slotValue empty">optional</span>
+              <button class="clearSlot ghost iconBtn" title="Clear">&times;</button>
+            </div>
           </div>
 
           <label class="fieldLabel" for="gevolgSheet">Gevolg options sheet</label>
           <select id="gevolgSheet" disabled></select>
 
           <button id="applyBtn" class="primary wide" disabled>Apply Columns</button>
+        </section>
+
+        <section class="sideSection">
+          <div class="sectionTitle">Behaviour</div>
+          <label class="toggle">
+            <input id="autoAdvance" type="checkbox" checked />
+            <span>Move to the next entry after False Positive / Not Sure / No access</span>
+          </label>
         </section>
 
         <section class="sideSection">
@@ -89,18 +102,31 @@
 
       <div id="bvContainer"></div>
 
+      <div id="jobBar" hidden>
+        <div id="jobBarHead">
+          <span>Captures</span>
+          <span id="jobSummary" class="muted"></span>
+          <button id="jobToggle" class="ghost iconBtn" title="Hide">&#9662;</button>
+        </div>
+        <div id="jobList"></div>
+      </div>
+
       <div id="actions">
-        <button id="undoBtn" disabled title="Undo last change">&#8630; Undo</button>
-        <button id="redoBtn" disabled title="Redo">Redo &#8631;</button>
-        <span class="divider"></span>
-        <button id="generateBtn" class="primary" disabled>Generate Report</button>
-        <button id="deleteReportBtn" class="danger" disabled>Delete Report</button>
-        <span class="divider"></span>
-        <button id="falsePositiveBtn" disabled>False Positive</button>
-        <button id="notSureBtn" disabled>Not Sure</button>
-        <span class="divider"></span>
-        <button id="prevBtn" disabled title="Previous entry">&larr;</button>
-        <button id="skipBtn" disabled>Skip &rarr;</button>
+        <div class="actionRow">
+          <button id="undoBtn" disabled title="Undo last change">&#8630; Undo</button>
+          <button id="redoBtn" disabled title="Redo">Redo &#8631;</button>
+          <span class="divider"></span>
+          <button id="generateBtn" class="primary" disabled>Generate Report</button>
+          <button id="deleteReportBtn" class="danger" disabled>Delete Report</button>
+        </div>
+        <div class="actionRow triage">
+          <button id="falsePositiveBtn" disabled>False Positive</button>
+          <button id="notSureBtn" disabled>Not Sure</button>
+          <button id="noAccessBtn" disabled>No access</button>
+          <span class="divider"></span>
+          <button id="prevBtn" class="narrowBtn" disabled title="Previous entry">&larr;</button>
+          <button id="skipBtn" class="narrowBtn" disabled title="Skip without changing the file">&rarr;</button>
+        </div>
       </div>
 
       <div id="logWrap">

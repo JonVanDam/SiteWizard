@@ -4,10 +4,12 @@ contextBridge.exposeInMainWorld('api', {
   openExcel: () => ipcRenderer.invoke('dialog:openExcel'),
   selectSheet: (sheetName) => ipcRenderer.invoke('excel:selectSheet', sheetName),
   setColumns: (cfg) => ipcRenderer.invoke('excel:setColumns', cfg),
+  restoreSession: () => ipcRenderer.invoke('excel:restoreSession'),
 
   openTemplate: () => ipcRenderer.invoke('dialog:openTemplate'),
   selectOutputFolder: () => ipcRenderer.invoke('dialog:selectOutputFolder'),
   loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (partial) => ipcRenderer.invoke('settings:save', partial),
 
   setBrowserViewBounds: (rect) => ipcRenderer.send('browserview:bounds', rect),
   navBack: () => ipcRenderer.invoke('browserview:back'),
@@ -21,14 +23,18 @@ contextBridge.exposeInMainWorld('api', {
   redo: () => ipcRenderer.invoke('entries:redo'),
   saveComment: (value) => ipcRenderer.invoke('entries:saveComment', value),
 
-  // Report generation runs in its own window.
-  openCapture: () => ipcRenderer.invoke('capture:open'),
+  // Captures run in the background; the review window opens when one is done.
+  captureJobs: () => ipcRenderer.invoke('capture:jobs'),
+  queueCapture: () => ipcRenderer.invoke('capture:queue'),
+  cancelJob: (id) => ipcRenderer.invoke('capture:cancelJob', id),
+  dismissJob: (id) => ipcRenderer.invoke('capture:dismissJob', id),
+  reviewJob: (id) => ipcRenderer.invoke('capture:review', id),
+  onCaptureJobs: (cb) => ipcRenderer.on('capture-jobs', (event, jobs) => cb(jobs)),
+
   captureContext: () => ipcRenderer.invoke('capture:context'),
-  captureRun: () => ipcRenderer.invoke('capture:run'),
   captureImage: (id) => ipcRenderer.invoke('capture:image', id),
   captureCancel: () => ipcRenderer.invoke('capture:cancel'),
   captureGenerate: (payload) => ipcRenderer.invoke('capture:generate', payload),
-  onCaptureProgress: (cb) => ipcRenderer.on('capture-progress', (event, p) => cb(p)),
 
   deleteReport: () => ipcRenderer.invoke('report:delete'),
 

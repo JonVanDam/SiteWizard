@@ -22,18 +22,13 @@
   <main id="capMain">
     <section id="shotPane">
       <div id="shotBar">
-        <div id="progress">
-          <span class="spinner" id="spinner"></span>
-          <span id="progressText">Starting…</span>
-        </div>
-        <div class="grow"></div>
         <span id="shotCount" class="muted"></span>
-        <button id="selectAllBtn" class="ghost" disabled>Select all</button>
-        <button id="selectNoneBtn" class="ghost" disabled>Select none</button>
-        <button id="recaptureBtn" class="ghost" disabled>Recapture</button>
+        <div class="grow"></div>
+        <button id="selectAllBtn" class="ghost">Select all</button>
+        <button id="selectNoneBtn" class="ghost">Select none</button>
       </div>
       <div id="shotList"></div>
-      <div id="shotEmpty" class="empty">No screenshots yet.</div>
+      <div id="shotEmpty" class="empty">No screenshots in this capture.</div>
     </section>
 
     <aside id="capSide">
@@ -52,9 +47,14 @@
         <input id="bronField" type="text" spellcheck="false" />
       </div>
 
+      <div class="field">
+        <label>Infractions</label>
+        <div id="inbreukPanel" class="checkPanel"></div>
+      </div>
+
       <div class="field grow">
         <label>Gevolg</label>
-        <div id="gevolgPanel"></div>
+        <div id="gevolgPanel" class="checkPanel"></div>
         <div id="gevolgSummary" class="muted small"></div>
       </div>
 

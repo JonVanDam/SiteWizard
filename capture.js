@@ -2,17 +2,15 @@ const els = {
   site: document.getElementById('capSite'),
   ref: document.getElementById('refField'),
   refBadge: document.getElementById('refBadge'),
-  spinner: document.getElementById('spinner'),
-  progressText: document.getElementById('progressText'),
   shotCount: document.getElementById('shotCount'),
   shotList: document.getElementById('shotList'),
   shotEmpty: document.getElementById('shotEmpty'),
   selectAllBtn: document.getElementById('selectAllBtn'),
   selectNoneBtn: document.getElementById('selectNoneBtn'),
-  recaptureBtn: document.getElementById('recaptureBtn'),
   agentSelect: document.getElementById('agentSelect'),
   datum: document.getElementById('datumField'),
   bron: document.getElementById('bronField'),
+  inbreukPanel: document.getElementById('inbreukPanel'),
   gevolgPanel: document.getElementById('gevolgPanel'),
   gevolgSummary: document.getElementById('gevolgSummary'),
   cancelBtn: document.getElementById('cancelBtn'),
@@ -23,27 +21,23 @@ const els = {
   viewerClose: document.getElementById('viewerClose'),
 };
 
-let ctx = null;
 let shots = [];
 const selected = new Set();
 let gevolgOptions = [];
 let gevolgSelection = [];
+let inbreukSelection = [];
 
-// ---- gevolg ----------------------------------------------------------
+// ---- gevolg / infractions --------------------------------------------
 
 function summariseGevolg() {
-  if (gevolgSelection.length === 0) {
-    els.gevolgSummary.textContent = 'No measures selected.';
-    return;
-  }
-  els.gevolgSummary.textContent = gevolgSelection
-    .map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label))
-    .join(' | ');
+  els.gevolgSummary.textContent = gevolgSelection.length
+    ? gevolgSelection.map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label)).join(' | ')
+    : 'No measures selected.';
 }
 
 function readGevolg() {
   const out = [];
-  els.gevolgPanel.querySelectorAll('.gevolgRow').forEach((row) => {
+  els.gevolgPanel.querySelectorAll('.checkRow').forEach((row) => {
     const box = row.querySelector('input[type="checkbox"]');
     if (!box || !box.checked) return;
     const text = row.querySelector('.freeText');
@@ -54,12 +48,42 @@ function readGevolg() {
 
 function onGevolgChanged() {
   gevolgSelection = readGevolg();
-  els.gevolgPanel.querySelectorAll('.gevolgRow').forEach((row) => {
+  els.gevolgPanel.querySelectorAll('.checkRow').forEach((row) => {
     const box = row.querySelector('input[type="checkbox"]');
     const text = row.querySelector('.freeText');
     if (text && box) text.disabled = !box.checked;
   });
   summariseGevolg();
+}
+
+function buildCheckRow(label, checked, onChange, needsText, textValue) {
+  const row = document.createElement('div');
+  row.className = 'checkRow';
+
+  const wrap = document.createElement('label');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.dataset.label = label;
+  box.checked = checked;
+  box.addEventListener('change', onChange);
+
+  const span = document.createElement('span');
+  span.textContent = label;
+  wrap.appendChild(box);
+  wrap.appendChild(span);
+  row.appendChild(wrap);
+
+  if (needsText) {
+    const text = document.createElement('input');
+    text.type = 'text';
+    text.className = 'freeText';
+    text.placeholder = 'Klik of tik om tekst in te voeren.';
+    text.value = textValue || '';
+    text.disabled = !checked;
+    text.addEventListener('change', onChange);
+    row.appendChild(text);
+  }
+  return row;
 }
 
 function buildGevolg() {
@@ -70,45 +94,33 @@ function buildGevolg() {
     .filter((s) => !known.has(s.label))
     .map((s) => ({ label: s.label, needsText: false }));
 
-  [...gevolgOptions, ...extras].forEach((opt, i) => {
-    const row = document.createElement('div');
-    row.className = 'gevolgRow';
-
-    const label = document.createElement('label');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.id = 'gv' + i;
-    box.dataset.label = opt.label;
-    box.checked = chosen.has(opt.label);
-    box.addEventListener('change', onGevolgChanged);
-
-    const span = document.createElement('span');
-    span.textContent = opt.label;
-    label.appendChild(box);
-    label.appendChild(span);
-    row.appendChild(label);
-
-    if (opt.needsText) {
-      const text = document.createElement('input');
-      text.type = 'text';
-      text.className = 'freeText';
-      text.placeholder = 'Klik of tik om tekst in te voeren.';
-      text.value = chosen.get(opt.label) || '';
-      text.disabled = !box.checked;
-      text.addEventListener('change', onGevolgChanged);
-      row.appendChild(text);
-    }
-    els.gevolgPanel.appendChild(row);
+  [...gevolgOptions, ...extras].forEach((opt) => {
+    els.gevolgPanel.appendChild(
+      buildCheckRow(opt.label, chosen.has(opt.label), onGevolgChanged, opt.needsText, chosen.get(opt.label))
+    );
   });
   summariseGevolg();
+}
+
+function onInbreukChanged() {
+  inbreukSelection = [];
+  els.inbreukPanel.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+    if (box.checked) inbreukSelection.push(box.dataset.label);
+  });
+}
+
+function buildInbreuk(options) {
+  els.inbreukPanel.innerHTML = '';
+  const chosen = new Set(inbreukSelection);
+  options.forEach((label) => {
+    els.inbreukPanel.appendChild(buildCheckRow(label, chosen.has(label), onInbreukChanged, false));
+  });
 }
 
 // ---- screenshots -----------------------------------------------------
 
 function updateCounts() {
-  els.shotCount.textContent = shots.length
-    ? `${selected.size} of ${shots.length} kept`
-    : '';
+  els.shotCount.textContent = shots.length ? `${selected.size} of ${shots.length} kept` : '';
   els.generateBtn.disabled = selected.size === 0;
   els.selectAllBtn.disabled = shots.length === 0;
   els.selectNoneBtn.disabled = shots.length === 0;
@@ -183,43 +195,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !els.viewer.hidden) closeViewer();
 });
 
-// ---- capture run -----------------------------------------------------
-
-window.api.onCaptureProgress((p) => {
-  if (p.phase === 'loading') {
-    els.progressText.textContent = p.total
-      ? `Loading page ${p.index} of ${p.total}: ${p.page}`
-      : `Loading ${p.page}`;
-  } else if (p.phase === 'queued') {
-    els.progressText.textContent = `Found ${p.total} page(s) to capture`;
-  } else if (p.phase === 'capturing') {
-    els.progressText.textContent = `Captured ${p.shots} screenshot(s)`;
-  } else if (p.phase === 'warning') {
-    els.progressText.textContent = p.message;
-  } else if (p.phase === 'done') {
-    els.progressText.textContent = `Finished — ${p.shots} screenshot(s)`;
-    els.spinner.classList.add('done');
-  }
-});
-
-async function runCapture() {
-  els.spinner.classList.remove('done');
-  els.recaptureBtn.disabled = true;
-  els.progressText.textContent = 'Starting…';
-  shots = [];
-  selected.clear();
-  renderShots();
-  try {
-    shots = await window.api.captureRun();
-    // Everything is kept by default; untick what you don't want.
-    shots.forEach((s) => selected.add(s.id));
-  } catch (err) {
-    els.progressText.textContent = 'Capture failed: ' + err.message;
-  }
-  renderShots();
-  els.recaptureBtn.disabled = false;
-}
-
 // ---- wiring ----------------------------------------------------------
 
 els.selectAllBtn.addEventListener('click', () => {
@@ -230,7 +205,6 @@ els.selectNoneBtn.addEventListener('click', () => {
   selected.clear();
   renderShots();
 });
-els.recaptureBtn.addEventListener('click', runCapture);
 els.cancelBtn.addEventListener('click', () => window.api.captureCancel());
 
 els.generateBtn.addEventListener('click', async () => {
@@ -244,6 +218,7 @@ els.generateBtn.addEventListener('click', async () => {
       datum: els.datum.value.trim(),
       bron: els.bron.value.trim(),
       gevolg: gevolgSelection,
+      inbreuk: inbreukSelection,
     });
   } catch (err) {
     alert(err.message);
@@ -253,10 +228,10 @@ els.generateBtn.addEventListener('click', async () => {
 });
 
 (async () => {
-  ctx = await window.api.captureContext();
-  els.site.textContent = ctx.rawUrl && ctx.rawUrl !== ctx.url
-    ? `${ctx.url}   (cell: ${ctx.rawUrl})`
-    : ctx.url;
+  const ctx = await window.api.captureContext();
+
+  els.site.textContent =
+    ctx.rawUrl && ctx.rawUrl !== ctx.url ? `${ctx.url}   (cell: ${ctx.rawUrl})` : ctx.url;
   els.ref.value = ctx.reference;
   els.refBadge.textContent = ctx.referenceIsNew ? 'new' : 'existing';
   els.refBadge.className = 'badge' + (ctx.referenceIsNew ? ' new' : '');
@@ -274,9 +249,15 @@ els.generateBtn.addEventListener('click', async () => {
   els.datum.value = new Date().toLocaleDateString('nl-BE');
   els.bron.value = ctx.bron || '';
 
+  inbreukSelection = ctx.inbreuk || [];
+  buildInbreuk(ctx.inbreukOptions || []);
+
   gevolgOptions = ctx.gevolgOptions || [];
   gevolgSelection = ctx.gevolg || [];
   buildGevolg();
 
-  runCapture();
+  // The crawl already ran in the background; everything is kept by default.
+  shots = ctx.shots || [];
+  shots.forEach((s) => selected.add(s.id));
+  renderShots();
 })();

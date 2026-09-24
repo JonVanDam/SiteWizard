@@ -21,6 +21,13 @@ const DEFAULT_GEVOLG_OPTIONS = [
   'Andere :',
 ];
 const DEFAULT_GEVOLG_SHEET = 'Gevolg opties';
+
+// Infringement articles offered when a report is generated. Fixed rather than
+// read from a sheet: these are statutory references, not a working list.
+const INBREUK_OPTIONS = [
+  'Art. 4 §1 (illegale exploitatie)',
+  'Art. 4 §2 (faciliteren / reclame)',
+];
 const GEVOLG_SEPARATOR = ' | ';
 
 // Names offered in the "Agent Name" dropdown when the settings file has none
@@ -60,10 +67,14 @@ const state = {
   // pre-fill so a run of sites getting the same measures is quick to mark.
   gevolgSticky: [],
   refColIdx: null, // column holding the report reference, null if not configured
+  inbreukColIdx: null, // column holding the infringement articles
   currentRow: null, // 0-based sheet row index of the entry currently on screen
 
-  // The capture window and everything it has collected for one entry.
-  capture: null, // { row, url, shots: [{id, pageUrl, slice, buffer, width, height}] }
+  // Background capture jobs. Screenshots live on disk; a job only holds
+  // metadata and thumbnails.
+  captureJobs: [],
+  captureRunning: 0,
+  activeReviewJobId: null,
 
   // <extLst> blocks captured from the source workbook, re-applied after
   // every save (see restoreSheetExtensions).
@@ -479,6 +490,19 @@ function gevolgTagValues(selection) {
   return { gevolg: chosen, gevolgText: chosen.join(GEVOLG_SEPARATOR), gevolgAll: all };
 }
 
+// Same three shapes as gevolg, for the INBREUK section:
+//   {#inbreukAll}{mark} {label}{/inbreukAll}, {#inbreuk}{.}{/inbreuk}, {inbreukText}
+function inbreukTagValues(selection) {
+  const chosen = (selection || []).slice();
+  const set = new Set(chosen);
+  const all = INBREUK_OPTIONS.map((label) => ({
+    label,
+    checked: set.has(label),
+    mark: set.has(label) ? '☒' : '☐',
+  }));
+  return { inbreuk: chosen, inbreukText: chosen.join(GEVOLG_SEPARATOR), inbreukAll: all };
+}
+
 function writeReport(context, screenshots) {
   const content = fs.readFileSync(state.templatePath, 'binary');
   const zip = new PizZip(content);
@@ -510,6 +534,7 @@ function writeReport(context, screenshots) {
       bron: context.bron || '',
       screenshots: screenshots.map((_, i) => i + 1),
       ...gevolgTagValues(context.gevolg),
+      ...inbreukTagValues(context.inbreuk),
     });
   } catch (err) {
     throw new Error(
@@ -574,6 +599,18 @@ function bronForRow(row) {
   if (idx === -1) return '';
   const v = cellValue(sheet, row, idx);
   return v === undefined ? '' : String(v).trim();
+}
+
+// Whatever articles are already recorded for a row, as a plain list.
+function inbreukForRow(row) {
+  if (state.inbreukColIdx == null) return [];
+  const sheet = state.workbook.Sheets[state.sheetName];
+  const v = cellValue(sheet, row, state.inbreukColIdx);
+  if (v === undefined || !String(v).trim()) return [];
+  return String(v)
+    .split('|')
+    .map((x) => x.trim())
+    .filter(Boolean);
 }
 
 // ---- Crawling and capturing --------------------------------------------
@@ -658,7 +695,7 @@ async function captureSlices(win, pageUrl, onShot) {
   }
 }
 
-async function crawlAndCapture(startUrl, progress) {
+async function crawlAndCapture(startUrl, progress, opts) {
   const root = absoluteUrl(startUrl);
   const win = new BrowserWindow({
     show: false,
@@ -674,13 +711,33 @@ async function crawlAndCapture(startUrl, progress) {
 
   const shots = [];
   let nextId = 1;
+  // Full-resolution PNGs go straight to disk. A single site is several
+  // megabytes, and with a queue there can be many in flight, so only the
+  // small thumbnails are kept in memory.
   const collect = (shot) => {
-    shots.push({ id: String(nextId++), ...shot });
+    const id = String(nextId++);
+    const file = path.join(opts.dir, `shot-${id}.png`);
+    try {
+      fs.writeFileSync(file, shot.buffer);
+    } catch (err) {
+      log(`Could not store a screenshot: ${err.message}`);
+      return;
+    }
+    shots.push({
+      id,
+      file,
+      pageUrl: shot.pageUrl,
+      slice: shot.slice,
+      sliceCount: shot.sliceCount,
+      thumb: shot.thumb,
+      width: shot.width,
+      height: shot.height,
+    });
     progress({ phase: 'capturing', shots: shots.length, page: shot.pageUrl });
   };
 
   try {
-    progress({ phase: 'loading', page: root });
+    progress({ phase: 'loading', page: root, index: 1 });
     const ok = await loadInWindow(win, root);
     if (!ok) {
       progress({ phase: 'warning', message: `Homepage did not load cleanly: ${root}` });
@@ -711,7 +768,7 @@ async function crawlAndCapture(startUrl, progress) {
     progress({ phase: 'queued', total: queue.length + 1 });
 
     for (let i = 0; i < queue.length; i++) {
-      if (!state.capture || state.capture.cancelled) break;
+      if (opts.isCancelled()) break;
       progress({ phase: 'loading', page: queue[i], index: i + 2, total: queue.length + 1 });
       const loaded = await loadInWindow(win, queue[i]);
       if (!loaded) continue;
@@ -721,6 +778,126 @@ async function crawlAndCapture(startUrl, progress) {
     if (!win.isDestroyed()) win.destroy();
   }
   return shots;
+}
+
+// ---- Capture queue -----------------------------------------------------
+// Captures run in the background so triage never has to wait on a crawl.
+// Concurrency is capped because each job is a full Chromium window.
+
+const MAX_CONCURRENT_CAPTURES = 2;
+let nextJobId = 1;
+
+function jobRoot() {
+  return path.join(app.getPath('temp'), 'sitewizard-captures');
+}
+
+function publicJob(job) {
+  return {
+    id: job.id,
+    row: job.row,
+    url: job.url,
+    status: job.status,
+    message: job.message || '',
+    shotCount: job.shots ? job.shots.length : 0,
+    error: job.error || '',
+  };
+}
+
+function broadcastJobs() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('capture-jobs', state.captureJobs.map(publicJob));
+  }
+}
+
+function describeProgress(p) {
+  if (p.phase === 'loading') {
+    return p.total ? `Loading page ${p.index} of ${p.total}` : 'Loading homepage';
+  }
+  if (p.phase === 'queued') return `Found ${p.total} page(s)`;
+  if (p.phase === 'capturing') return `${p.shots} screenshot(s)`;
+  if (p.phase === 'warning') return p.message;
+  return '';
+}
+
+function discardJobFiles(job) {
+  try {
+    fs.rmSync(path.join(jobRoot(), job.id), { recursive: true, force: true });
+  } catch {
+    /* a leftover temp folder is harmless */
+  }
+}
+
+async function runJob(job) {
+  job.status = 'running';
+  job.message = 'Starting…';
+  broadcastJobs();
+
+  const dir = path.join(jobRoot(), job.id);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    job.shots = await crawlAndCapture(
+      job.url,
+      (p) => {
+        const text = describeProgress(p);
+        if (text) {
+          job.message = text;
+          broadcastJobs();
+        }
+      },
+      { dir, isCancelled: () => job.cancelled }
+    );
+    if (job.cancelled) {
+      job.status = 'cancelled';
+      job.message = 'Cancelled';
+      discardJobFiles(job);
+    } else if (job.shots.length === 0) {
+      job.status = 'failed';
+      job.error = 'Nothing could be captured';
+      job.message = job.error;
+    } else {
+      job.status = 'done';
+      job.message = `${job.shots.length} screenshot(s) ready`;
+      log(`Row ${job.row + 1}: capture finished — ${job.shots.length} screenshot(s) for ${job.url}`);
+    }
+  } catch (err) {
+    job.status = 'failed';
+    job.error = err.message;
+    job.message = 'Failed: ' + err.message;
+    log(`Row ${job.row + 1}: capture failed — ${err.message}`);
+  } finally {
+    state.captureRunning -= 1;
+    broadcastJobs();
+    pumpQueue();
+  }
+}
+
+function pumpQueue() {
+  while (state.captureRunning < MAX_CONCURRENT_CAPTURES) {
+    const next = state.captureJobs.find((j) => j.status === 'queued' && !j.cancelled);
+    if (!next) return;
+    state.captureRunning += 1;
+    runJob(next);
+  }
+}
+
+function queueCapture(row, url) {
+  const existing = state.captureJobs.find(
+    (j) => j.row === row && (j.status === 'queued' || j.status === 'running')
+  );
+  if (existing) return existing;
+  const job = {
+    id: String(nextJobId++),
+    row,
+    url,
+    status: 'queued',
+    message: 'Waiting…',
+    shots: [],
+    cancelled: false,
+  };
+  state.captureJobs.push(job);
+  broadcastJobs();
+  pumpQueue();
+  return job;
 }
 
 // ---- Entry navigation ------------------------------------------------
@@ -780,13 +957,10 @@ function moveToRow(row) {
 
 // ---- IPC: file dialogs / setup -------------------------------------------
 
-ipcMain.handle('dialog:openExcel', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'Excel Files', extensions: ['xlsx', 'xls'] }],
-    properties: ['openFile'],
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  const filePath = result.filePaths[0];
+// The three setup steps are factored out of their IPC handlers so that
+// restoring the last session can run exactly the same code path.
+
+function openWorkbook(filePath) {
   // cellStyles is what makes SheetJS parse row properties, which is how a
   // filtered-out row is represented (hidden="1"). Without it '!rows' is
   // undefined and SiteWizard can't tell which rows the filter excludes.
@@ -798,10 +972,11 @@ ipcMain.handle('dialog:openExcel', async () => {
   if (extSheets.length > 0) {
     log(`Preserving dropdown lists on sheet(s): ${extSheets.join(', ')}.`);
   }
+  saveSettings({ excelPath: filePath });
   return { filePath, sheetNames: workbook.SheetNames };
-});
+}
 
-ipcMain.handle('excel:selectSheet', async (event, sheetName) => {
+function selectSheet(sheetName) {
   if (!state.workbook) throw new Error('No workbook loaded');
   const sheet = state.workbook.Sheets[sheetName];
   if (!sheet || !sheet['!ref']) throw new Error('Sheet not found or empty: ' + sheetName);
@@ -812,10 +987,11 @@ ipcMain.handle('excel:selectSheet', async (event, sheetName) => {
   for (let c = state.range.s.c; c <= state.range.e.c; c++) {
     header.push(cellValue(sheet, state.range.s.r, c));
   }
+  saveSettings({ sheetName });
   return { header };
-});
+}
 
-ipcMain.handle('excel:setColumns', async (event, cfg) => {
+function applyColumns(cfg) {
   if (!state.workbook || !state.sheetName) throw new Error('No sheet loaded');
   const sheet = state.workbook.Sheets[state.sheetName];
   const urlIdx = resolveColumn(sheet, state.range, cfg.urlCol, false);
@@ -833,11 +1009,16 @@ ipcMain.handle('excel:setColumns', async (event, cfg) => {
   if (cfg.refCol && cfg.refCol.trim()) {
     refIdx = resolveColumn(sheet, state.range, cfg.refCol, true);
   }
+  let inbreukIdx = null;
+  if (cfg.inbreukCol && cfg.inbreukCol.trim()) {
+    inbreukIdx = resolveColumn(sheet, state.range, cfg.inbreukCol, true);
+  }
   state.urlColIdx = urlIdx;
   state.statusColIdx = statusIdx;
   state.commentColIdx = commentIdx;
   state.gevolgColIdx = gevolgIdx;
   state.refColIdx = refIdx;
+  state.inbreukColIdx = inbreukIdx;
   resetWorkflowState();
 
   // Only touch the options sheet when a gevolg column is actually in use, so
@@ -866,8 +1047,63 @@ ipcMain.handle('excel:setColumns', async (event, cfg) => {
     gevolgCol: cfg.gevolgCol || '',
     gevolgSheet: cfg.gevolgSheet || '',
     refCol: cfg.refCol || '',
+    inbreukCol: cfg.inbreukCol || '',
   });
   return moveToRow(startRow);
+}
+
+ipcMain.handle('dialog:openExcel', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: 'Excel Files', extensions: ['xlsx', 'xls'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return openWorkbook(result.filePaths[0]);
+});
+
+ipcMain.handle('excel:selectSheet', async (event, sheetName) => selectSheet(sheetName));
+
+ipcMain.handle('excel:setColumns', async (event, cfg) => applyColumns(cfg));
+
+// Reopens last session's workbook, sheet and columns on startup. Anything
+// that has moved or been renamed since is reported and skipped rather than
+// treated as an error, so the app still opens cleanly.
+ipcMain.handle('excel:restoreSession', async () => {
+  const saved = loadSettings();
+  if (!saved.excelPath) return null;
+  if (!fs.existsSync(saved.excelPath)) {
+    log(`Last workbook is no longer at ${saved.excelPath} — load it again.`);
+    return null;
+  }
+  try {
+    const opened = openWorkbook(saved.excelPath);
+    const sheetName = opened.sheetNames.includes(saved.sheetName)
+      ? saved.sheetName
+      : opened.sheetNames[0];
+    const { header } = selectSheet(sheetName);
+    log(`Reopened ${path.basename(saved.excelPath)} (${sheetName}).`);
+
+    let entry = null;
+    if (saved.urlCol && saved.statusCol) {
+      try {
+        entry = applyColumns({
+          urlCol: saved.urlCol,
+          statusCol: saved.statusCol,
+          commentCol: saved.commentCol || '',
+          gevolgCol: saved.gevolgCol || '',
+          gevolgSheet: saved.gevolgSheet || '',
+          refCol: saved.refCol || '',
+          inbreukCol: saved.inbreukCol || '',
+        });
+      } catch (err) {
+        log('Could not reapply the saved columns: ' + err.message);
+      }
+    }
+    return { ...opened, sheetName, header, entry };
+  } catch (err) {
+    log('Could not reopen the last workbook: ' + err.message);
+    return null;
+  }
 });
 
 ipcMain.handle('settings:load', () => loadSettings());
@@ -927,8 +1163,19 @@ ipcMain.handle('entries:markStatus', async (event, status) => {
   saveWorkbook();
   recordAction({ type: 'status', row, colIdx: state.statusColIdx, oldValue: oldStr, newValue: status });
   log(`Row ${row + 1}: marked "${status}" and saved.`);
+
+  // Staying put lets an agent mark a status and still add a comment or queue a
+  // capture for the same entry before moving on.
+  const saved = loadSettings();
+  if (saved.autoAdvance === false) return buildEntryInfo(row);
+
   const nextRow = findNextRow(sheet, state.range, state.urlColIdx, state.statusColIdx, row + 1);
   return moveToRow(nextRow);
+});
+
+ipcMain.handle('settings:save', async (event, partial) => {
+  saveSettings(partial || {});
+  return loadSettings();
 });
 
 ipcMain.handle('entries:skip', async () => {
@@ -992,36 +1239,65 @@ ipcMain.handle('entries:saveComment', async (event, value) => {
   return true;
 });
 
-// ---- IPC: capture window ---------------------------------------------
-// "Generate Report" no longer writes anything on its own. It opens a capture
-// window which crawls the site, offers the screenshots for selection, and
-// collects the agent name and gevolg measures. Only when that window's own
-// Generate button is pressed is the report written and the sheet updated.
+// ---- IPC: capture queue and review window -----------------------------
+// Generate Report queues a background capture and returns immediately. When a
+// job finishes, its review window is where the screenshots are chosen and the
+// report is finally written; nothing touches the sheet before that.
 
-let captureWindow = null;
+let reviewWindow = null;
 
-function captureProgress(payload) {
-  if (captureWindow && !captureWindow.isDestroyed()) {
-    captureWindow.webContents.send('capture-progress', payload);
-  }
-}
+ipcMain.handle('capture:jobs', async () => state.captureJobs.map(publicJob));
 
-ipcMain.handle('capture:open', async () => {
+ipcMain.handle('capture:queue', async () => {
   if (state.currentRow == null || state.currentRow === -1) throw new Error('No current entry to report on');
   if (!state.templatePath) throw new Error('Select a report template first');
   if (!state.outputFolder) throw new Error('Select an output folder first');
-  if (captureWindow && !captureWindow.isDestroyed()) {
-    captureWindow.focus();
-    return true;
-  }
-
   const sheet = state.workbook.Sheets[state.sheetName];
   const row = state.currentRow;
-  state.capture = { row, url: rowUrl(sheet, row), shots: [], cancelled: false };
+  const job = queueCapture(row, rowUrl(sheet, row));
+  log('Row ' + (row + 1) + ': capture queued for ' + job.url);
+  return publicJob(job);
+});
 
-  captureWindow = new BrowserWindow({
-    width: 1280,
-    height: 900,
+ipcMain.handle('capture:cancelJob', async (event, id) => {
+  const job = state.captureJobs.find((j) => j.id === id);
+  if (!job) return false;
+  job.cancelled = true;
+  if (job.status === 'queued') {
+    job.status = 'cancelled';
+    job.message = 'Cancelled';
+    broadcastJobs();
+  }
+  return true;
+});
+
+ipcMain.handle('capture:dismissJob', async (event, id) => {
+  const job = state.captureJobs.find((j) => j.id === id);
+  if (job) {
+    job.cancelled = true;
+    discardJobFiles(job);
+  }
+  state.captureJobs = state.captureJobs.filter((j) => j.id !== id);
+  broadcastJobs();
+  return true;
+});
+
+ipcMain.handle('capture:review', async (event, id) => {
+  const job = state.captureJobs.find((j) => j.id === id);
+  if (!job) throw new Error('That capture is no longer available');
+  if (job.status !== 'done') throw new Error('That capture has not finished yet');
+  state.activeReviewJobId = id;
+
+  if (reviewWindow && !reviewWindow.isDestroyed()) {
+    reviewWindow.webContents.reload();
+    reviewWindow.focus();
+    return true;
+  }
+  reviewWindow = new BrowserWindow({
+    width: 1040,
+    height: 820,
+    minWidth: 720,
+    minHeight: 560,
     parent: mainWindow,
     title: 'Generate Report',
     backgroundColor: '#1b1b1d',
@@ -1031,21 +1307,26 @@ ipcMain.handle('capture:open', async () => {
       nodeIntegration: false,
     },
   });
-  captureWindow.setMenu(null);
-  captureWindow.loadFile('capture.html');
-  captureWindow.on('closed', () => {
-    captureWindow = null;
-    if (state.capture) state.capture.cancelled = true;
+  reviewWindow.setMenu(null);
+  reviewWindow.loadFile('capture.html');
+  reviewWindow.on('closed', () => {
+    reviewWindow = null;
+    state.activeReviewJobId = null;
   });
   return true;
 });
 
-// The capture window asks for its own context once it has loaded.
+function activeJob() {
+  const job = state.captureJobs.find((j) => j.id === state.activeReviewJobId);
+  if (!job) throw new Error('No capture is open for review');
+  return job;
+}
+
 ipcMain.handle('capture:context', async () => {
-  if (!state.capture) throw new Error('No capture in progress');
+  const job = activeJob();
   const sheet = state.workbook.Sheets[state.sheetName];
-  const row = state.capture.row;
-  const { reference, isNew } = referenceForRow(row);
+  const row = job.row;
+  const ref = referenceForRow(row);
   const saved = loadSettings();
 
   const stored = state.gevolgColIdx != null ? cellValue(sheet, row, state.gevolgColIdx) : undefined;
@@ -1054,63 +1335,65 @@ ipcMain.handle('capture:context', async () => {
       ? parseGevolgCell(stored)
       : state.gevolgSticky.slice();
 
+  const raw = cellValue(sheet, row, state.urlColIdx);
+
   return {
+    jobId: job.id,
     row,
-    url: state.capture.url,
-    rawUrl: String(cellValue(sheet, row, state.urlColIdx) ?? ''),
-    reference,
-    referenceIsNew: isNew,
+    url: job.url,
+    rawUrl: raw === undefined ? '' : String(raw),
+    reference: ref.reference,
+    referenceIsNew: ref.isNew,
     gevolgEnabled: state.gevolgColIdx != null,
     gevolgOptions: state.gevolgOptions,
     gevolg,
     agentNames: saved.agentNames && saved.agentNames.length ? saved.agentNames : DEFAULT_AGENT_NAMES,
     agentName: saved.agentName || '',
     bron: bronForRow(row),
+    inbreukEnabled: state.inbreukColIdx != null,
+    inbreukOptions: INBREUK_OPTIONS,
+    inbreuk: inbreukForRow(row),
+    shots: job.shots.map((s) => ({
+      id: s.id,
+      pageUrl: s.pageUrl,
+      slice: s.slice,
+      sliceCount: s.sliceCount,
+      thumb: s.thumb,
+      width: s.width,
+      height: s.height,
+    })),
   };
 });
 
-ipcMain.handle('capture:run', async () => {
-  if (!state.capture) throw new Error('No capture in progress');
-  state.capture.shots = [];
-  const shots = await crawlAndCapture(state.capture.url, captureProgress);
-  if (!state.capture) return [];
-  state.capture.shots = shots;
-  captureProgress({ phase: 'done', shots: shots.length });
-  // Buffers stay in the main process; the window only needs the thumbnails.
-  return shots.map((s) => ({
-    id: s.id,
-    pageUrl: s.pageUrl,
-    slice: s.slice,
-    sliceCount: s.sliceCount,
-    thumb: s.thumb,
-    width: s.width,
-    height: s.height,
-  }));
-});
-
-// Full-resolution image for the fullscreen viewer.
+// Full-resolution image for the fullscreen viewer, read back off disk.
 ipcMain.handle('capture:image', async (event, id) => {
-  if (!state.capture) return null;
-  const shot = state.capture.shots.find((s) => s.id === id);
-  return shot ? 'data:image/png;base64,' + shot.buffer.toString('base64') : null;
+  const job = activeJob();
+  const shot = job.shots.find((s) => s.id === id);
+  if (!shot) return null;
+  try {
+    return 'data:image/png;base64,' + fs.readFileSync(shot.file).toString('base64');
+  } catch (err) {
+    log('Could not read a captured screenshot: ' + err.message);
+    return null;
+  }
 });
 
 ipcMain.handle('capture:cancel', async () => {
-  if (state.capture) state.capture.cancelled = true;
-  if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close();
+  if (reviewWindow && !reviewWindow.isDestroyed()) reviewWindow.close();
   return true;
 });
 
-// This is the only place a report is written and the sheet updated.
+// The only place a report is written and the sheet updated.
 ipcMain.handle('capture:generate', async (event, payload) => {
-  if (!state.capture) throw new Error('No capture in progress');
+  const job = activeJob();
   const sheet = state.workbook.Sheets[state.sheetName];
-  const row = state.capture.row;
-  const url = state.capture.url;
+  const row = job.row;
+  const url = job.url;
 
   const chosen = (payload.selectedIds || [])
-    .map((id) => state.capture.shots.find((s) => s.id === id))
-    .filter(Boolean);
+    .map((id) => job.shots.find((s) => s.id === id))
+    .filter(Boolean)
+    .map((s) => ({ buffer: fs.readFileSync(s.file), width: s.width, height: s.height }));
   if (chosen.length === 0) throw new Error('Select at least one screenshot');
 
   const context = {
@@ -1120,19 +1403,15 @@ ipcMain.handle('capture:generate', async (event, payload) => {
     controleur: payload.agentName || '',
     bron: payload.bron || '',
     gevolg: payload.gevolg || [],
+    inbreuk: payload.inbreuk || [],
   };
 
   const outBuffer = writeReport(context, chosen);
   const outPath = reportPathFor(url);
   fs.writeFileSync(outPath, outBuffer);
-  state.screenshotsByRow[row] = chosen.map((s) => ({
-    buffer: s.buffer,
-    width: s.width,
-    height: s.height,
-  }));
 
-  // Sheet writes happen only now, never while the capture window is open.
-  let wrote = [];
+  // Sheet writes happen only now, never while the capture is running.
+  const wrote = [];
   if (state.gevolgColIdx != null) {
     const value = formatGevolg(payload.gevolg || []);
     const old = cellValue(sheet, row, state.gevolgColIdx);
@@ -1143,6 +1422,16 @@ ipcMain.handle('capture:generate', async (event, payload) => {
       wrote.push('gevolg');
     }
     state.gevolgSticky = (payload.gevolg || []).map((s) => ({ label: s.label, text: s.text || '' }));
+  }
+  if (state.inbreukColIdx != null) {
+    const value = (payload.inbreuk || []).join(GEVOLG_SEPARATOR);
+    const old = cellValue(sheet, row, state.inbreukColIdx);
+    const oldStr = old === undefined ? '' : String(old);
+    if (oldStr !== value) {
+      setCell(sheet, row, state.inbreukColIdx, value);
+      recordAction({ type: 'inbreuk', row, colIdx: state.inbreukColIdx, oldValue: oldStr, newValue: value });
+      wrote.push('infractions');
+    }
   }
   if (state.refColIdx != null && context.refnr) {
     const old = cellValue(sheet, row, state.refColIdx);
@@ -1156,12 +1445,18 @@ ipcMain.handle('capture:generate', async (event, payload) => {
   if (wrote.length > 0) saveWorkbook();
 
   saveSettings({ agentName: payload.agentName || '' });
-  log(`Row ${row + 1}: report ${context.refnr} saved with ${chosen.length} screenshot(s): ${outPath}`);
-  if (wrote.length > 0) log(`Row ${row + 1}: wrote ${wrote.join(' and ')} to the sheet.`);
+  log('Row ' + (row + 1) + ': report ' + context.refnr + ' saved with ' + chosen.length + ' screenshot(s): ' + outPath);
+  if (wrote.length > 0) log('Row ' + (row + 1) + ': wrote ' + wrote.join(' and ') + ' to the sheet.');
 
-  if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close();
-  if (mainWindow) mainWindow.webContents.send('report-created', { row, outPath, reference: context.refnr });
-  return { outPath, screenshotCount: chosen.length, reference: context.refnr };
+  // The job has served its purpose; drop it and its files.
+  discardJobFiles(job);
+  state.captureJobs = state.captureJobs.filter((j) => j.id !== job.id);
+  state.activeReviewJobId = null;
+  broadcastJobs();
+
+  if (reviewWindow && !reviewWindow.isDestroyed()) reviewWindow.close();
+  if (mainWindow) mainWindow.webContents.send('report-created', { row: row, outPath: outPath, reference: context.refnr });
+  return { outPath: outPath, screenshotCount: chosen.length, reference: context.refnr };
 });
 
 ipcMain.handle('report:delete', async () => {

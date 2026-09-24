@@ -26,7 +26,10 @@ Setup lives in the collapsible sidebar on the left. The **☰** button hides it 
 browser more room; the one in the toolbar brings it back.
 
 1. **Load Excel File…** — pick the source `.xlsx`/`.xls`, then pick the **Sheet** from the
-   dropdown if it isn't the first one.
+   dropdown if it isn't the first one. The workbook, sheet and docked columns are
+   remembered, so the next launch reopens them and jumps straight to the first
+   unprocessed row. Anything that has since moved or been renamed is reported in the log
+   and skipped rather than treated as an error.
 2. **Dock the columns.** The sheet's header row is read automatically and each column name
    appears as a draggable chip. Drag a chip onto a slot:
 
@@ -37,6 +40,7 @@ browser more room; the one in the toolbar brings it back.
    | Comment | no | the comment box above the browser |
    | Gevolg | no | the follow-up measures chosen when a report is generated |
    | Reference | no | the report reference (`I085-2026`) |
+   | Infractions | no | the articles ticked when a report is generated |
 
    A slot whose name isn't in the header row is created in the next free column. Clear a
    slot with the **×**. **Apply Columns** stays disabled until URL and Status are docked.
@@ -70,33 +74,49 @@ browser more room; the one in the toolbar brings it back.
      exists for the entry.
    - **Delete Report** — deletes the current entry's report file, after a confirmation
      prompt.
-   - **False Positive** / **Not Sure** — writes that status, saves the workbook
-     immediately, and advances.
+   - **False Positive** / **Not Sure** / **No access** — writes that status and saves the
+     workbook immediately. Whether it then advances is controlled by the **Behaviour**
+     toggle in the sidebar; turn it off to stay on the entry and add a comment or queue a
+     capture before moving on.
    - **←** — jumps back to the entry you were on immediately before this one.
-   - **Skip →** — advances without touching the Excel file at all.
+   - **→** — advances without touching the Excel file at all.
+
+   The triage verbs sit on their own row, and the layout tightens below 1000px, because
+   agents typically run this side by side with the report window.
 
 ## Generating a report
 
-**Generate Report** opens a separate window that does the evidence gathering:
+**Generate Report** queues a capture and returns immediately — you keep triaging while it
+runs. A **Captures** strip appears above the buttons showing each job's progress, with
+**Cancel** while it runs and **Review** once it's ready. Two captures run at a time;
+the rest wait their turn.
 
-- It loads the site's homepage at A4 width so the page lays out like a printed sheet, then
-  collects the links on it, keeps the same-domain ones, and loads each in turn — one level
-  deep, 20 pages maximum. Tall pages are captured as several stacked slices (up to four).
+The crawl loads the site's homepage at A4 width so the page lays out like a printed sheet,
+then collects the links on it, keeps the same-domain ones, and loads each in turn — one
+level deep, 20 pages maximum. Tall pages are captured as several stacked slices (up to
+four). Screenshots are written to a temp folder rather than held in memory, so a queue of
+sites doesn't grow the app's footprint.
+
+**Review** opens the report window for that job:
+
 - Every screenshot is listed with a thumbnail, its page URL and which slice it is. All are
   kept by default; untick the ones you don't want, or use **Select all** / **Select none**.
-  **Recapture** runs the crawl again.
 - **Click or right-click a thumbnail** to open it fullscreen at native resolution. Escape
   closes it.
 - **Reference** is filled in at the top. If the row already has one it is reused as-is;
   otherwise the next free `I###-YYYY` is worked out by scanning the whole workbook. It is
   editable, and the badge says whether it's new or existing.
-- **Agent Name**, **Datum onderzoek**, **Bron** and the **Gevolg** measures are chosen in
-  the right-hand panel. The agent name is remembered between runs; Bron is pre-filled from
+- **Agent Name**, **Datum onderzoek**, **Bron**, the **Infractions** articles and the
+  **Gevolg** measures are chosen in the right-hand panel. The agent name is remembered between runs; Bron is pre-filled from
   the row's own Bron column when the sheet has one.
 
 Only when you press **Generate Report** in that window is the `.docx` written and the
-sheet updated — the gevolg measures and the reference go in then, and never before. Cancel
-leaves everything untouched.
+sheet updated — the gevolg measures, the infractions and the reference go in then, and
+never before. Cancel leaves everything untouched, and the job's temp files are cleared
+once the report is written.
+
+Because a job holds its own row, a capture queued earlier still writes to the right entry
+even if you have moved on several rows by the time you review it.
 
 ## Report template requirements
 
@@ -131,8 +151,12 @@ document:
 {gevolgText}                              only the ticked measures, on one line
 ```
 
-`{#gevolgAll}` reproduces a paper tick-box list; the other two only mention what was
-actually selected. All tags are always available, so a template can use any subset.
+The infraction articles have the same three shapes: `{#inbreukAll}{mark} {label}{/inbreukAll}`,
+`{#inbreuk}{.}{/inbreuk}` and `{inbreukText}`.
+
+`{#gevolgAll}` and `{#inbreukAll}` reproduce a paper tick-box list; the other forms only
+mention what was actually selected. All tags are always available, so a template can use
+any subset.
 
 You must also pick an **Output Folder** before generating reports; each report is saved
 there as `report_<sanitized-url>.docx` — one file per entry.
@@ -159,10 +183,10 @@ already has measures recorded shows its own values instead.
 
 ## Remembered settings
 
-The docked columns, options sheet name, agent name, report template path and output
-folder are remembered between launches (stored in `sitewizard-settings.json` under
-Electron's per-user app data folder). The source Excel file itself is not reopened
-automatically — pick it again each run via **Load Excel File…**.
+The workbook path, sheet, docked columns, options sheet name, agent name, auto-advance
+toggle, report template path and output folder are all remembered between launches, in
+`sitewizard-settings.json` under Electron's per-user app data folder. On startup the
+workbook is reopened and the columns reapplied automatically.
 
 ## Known limitations
 
@@ -170,6 +194,8 @@ automatically — pick it again each run via **Load Excel File…**.
   taller than the screen work area, and neither offscreen rendering nor the DevTools
   protocol lifts that limit, so pages are rendered at A4 *width* (which is what makes them
   lay out like a printed page) and captured in viewport-height slices.
+- Captures run two at a time. More would thrash memory, since each job is a full Chromium
+  window.
 - Crawling is one level deep and same-domain only. Pages reachable only through a menu
   that needs JavaScript interaction, or on a different host, are not visited.
 - **Undo/Redo** and **Previous** history are per-session (in memory only); they reset when
