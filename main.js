@@ -458,6 +458,27 @@ function reportPathFor(url) {
   return path.join(state.outputFolder, `report_${safeName}.docx`);
 }
 
+// Builds the gevolg-related tag values for the template. Three shapes are
+// offered so a template can show the measures as a list, as one line, or as a
+// full tick-box checklist mirroring the paper form:
+//   {#gevolg}{.}{/gevolg}                  -> only the selected measures
+//   {gevolgText}                           -> selected measures on one line
+//   {#gevolgAll}{mark} {label}{/gevolgAll} -> every option, ticked or not
+function gevolgTagValues(selection) {
+  const chosen = (selection || []).map((s) => (s.text ? `${s.label} ${s.text}`.trim() : s.label));
+  const chosenLabels = new Set((selection || []).map((s) => s.label));
+  const all = state.gevolgOptions.map((opt) => {
+    const hit = (selection || []).find((s) => s.label === opt.label);
+    const checked = chosenLabels.has(opt.label);
+    return {
+      label: hit && hit.text ? `${opt.label} ${hit.text}`.trim() : opt.label,
+      checked,
+      mark: checked ? '☒' : '☐',
+    };
+  });
+  return { gevolg: chosen, gevolgText: chosen.join(GEVOLG_SEPARATOR), gevolgAll: all };
+}
+
 function writeReport(context, screenshots) {
   const content = fs.readFileSync(state.templatePath, 'binary');
   const zip = new PizZip(content);

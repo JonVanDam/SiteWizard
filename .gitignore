@@ -24,3 +24,6 @@ desktop.ini
 
 # Local working data (internal / not for publication)
 .data/
+
+# Excel lock files (created while a workbook is open)
+~$*
