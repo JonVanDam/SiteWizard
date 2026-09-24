@@ -155,6 +155,14 @@ function createWindow() {
   browserView.webContents.on('did-navigate', (e, url) => sendNav(url));
   browserView.webContents.on('did-navigate-in-page', (e, url) => sendNav(url));
 
+  browserView.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith(ACTION_ORIGIN)) return;
+    e.preventDefault();
+    const showing = browserView.webContents.getURL();
+    if (!state.showingError || !showing.startsWith('file://')) return;
+    handleErrorPageAction(url);
+  });
+
   browserView.webContents.on('did-start-loading', () => {
     mainWindow.webContents.send('load-state', { loading: true });
   });
@@ -212,6 +220,41 @@ function errorPagePath() {
   return path.join(app.getPath('temp'), 'sitewizard-error.html');
 }
 
+// The error page needs buttons, but it lives in the same BrowserView that
+// loads the sites under investigation, so it gets no preload and no IPC
+// bridge. Instead its buttons are links to a host that can never resolve
+// (.invalid is reserved for exactly this), and the navigation is intercepted
+// before it goes anywhere. Two guards make sure only our own page can fire
+// one: the view must currently be showing the error document, and the
+// document doing the navigating must be that file.
+const ACTION_ORIGIN = 'https://sitewizard.invalid';
+
+function handleErrorPageAction(url) {
+  const action = url.slice(ACTION_ORIGIN.length).replace(/^\/+/, '').split(/[?#]/)[0];
+
+  if (action === 'retry') {
+    if (state.intendedUrl) navigateBrowserView(state.intendedUrl);
+    return;
+  }
+  if (action === 'open-external') {
+    const target = state.intendedUrl;
+    if (!target || !/^https?:\/\//i.test(target)) return;
+    shell.openExternal(target);
+    log('Opened in the default browser: ' + target);
+    return;
+  }
+  if (action === 'no-access') {
+    try {
+      const info = applyStatus('No access');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('entry-updated', info);
+      }
+    } catch (err) {
+      log('Could not mark No access: ' + err.message);
+    }
+  }
+}
+
 function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')
@@ -253,6 +296,12 @@ function showErrorPage(url, description, code) {
   h1 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
   p { font-size: 13.5px; line-height: 1.6; color: #9c9a96; margin: 0 0 14px; }
   .url { font-size: 12.5px; color: #4a9cbe; word-break: break-all; margin-bottom: 18px; }
+  .actions { display: flex; gap: 8px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .btn { font-size: 13px; padding: 8px 14px; border-radius: 6px; text-decoration: none;
+         border: 1px solid #38383f; background: #2c2c31; color: #e9e7e4; }
+  .btn:hover { background: #303036; border-color: #46464e; }
+  .btn.primary { background: #4a9cbe; border-color: #4a9cbe; color: #1b1b1d; font-weight: 600; }
+  .btn.primary:hover { background: #5fb0d0; border-color: #5fb0d0; }
   .detail { font-family: Consolas, monospace; font-size: 11.5px; color: #6f6d6a;
             border-top: 1px solid #2e2e34; padding-top: 12px; }
 </style></head>
@@ -261,8 +310,11 @@ function showErrorPage(url, description, code) {
   <h1>This site could not be opened</h1>
   <div class="url">${escapeHtml(url)}</div>
   <p>${escapeHtml(explainLoadError(code))}</p>
-  <p>Use <strong>Open externally</strong> in the toolbar to try it in your normal browser,
-     or mark the entry as <strong>No access</strong>.</p>
+  <div class="actions">
+    <a class="btn primary" href="${ACTION_ORIGIN}/open-external">Open in your browser</a>
+    <a class="btn" href="${ACTION_ORIGIN}/no-access">Mark as No access</a>
+    <a class="btn" href="${ACTION_ORIGIN}/retry">Try again</a>
+  </div>
   <div class="detail">${escapeHtml(description)} (${escapeHtml(code)})</div>
 </div></body></html>`;
   try {
@@ -1309,7 +1361,7 @@ ipcMain.handle('browserview:openExternal', async () => {
 
 // ---- IPC: workflow actions ---------------------------------------------
 
-ipcMain.handle('entries:markStatus', async (event, status) => {
+function applyStatus(status) {
   if (state.currentRow == null || state.currentRow === -1) throw new Error('No current entry');
   const sheet = state.workbook.Sheets[state.sheetName];
   const row = state.currentRow;
@@ -1327,7 +1379,9 @@ ipcMain.handle('entries:markStatus', async (event, status) => {
 
   const nextRow = findNextRow(sheet, state.range, state.urlColIdx, state.statusColIdx, row + 1);
   return moveToRow(nextRow);
-});
+}
+
+ipcMain.handle('entries:markStatus', async (event, status) => applyStatus(status));
 
 ipcMain.handle('settings:save', async (event, partial) => {
   saveSettings(partial || {});

@@ -45,4 +45,5 @@ contextBridge.exposeInMainWorld('api', {
   onNav: (cb) => ipcRenderer.on('nav-state', (event, navState) => cb(navState)),
   onLoadState: (cb) => ipcRenderer.on('load-state', (event, s) => cb(s)),
   onReportCreated: (cb) => ipcRenderer.on('report-created', (event, info) => cb(info)),
+  onEntryUpdated: (cb) => ipcRenderer.on('entry-updated', (event, info) => cb(info)),
 });

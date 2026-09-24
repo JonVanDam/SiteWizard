@@ -479,6 +479,9 @@ els.generateBtn.addEventListener('click', async () => {
   }
 });
 
+// A status set from the error page's buttons still has to move the UI on.
+window.api.onEntryUpdated((info) => setEntry(info));
+
 window.api.onReportCreated((info) => {
   appendLog(`Report ${info.reference} created: ${info.outPath}`);
 });

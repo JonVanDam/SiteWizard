@@ -63,8 +63,9 @@ browser more room; the one in the toolbar brings it back.
    rewritten, so the other URLs stay in the sheet.
 5. Browse the site normally in the embedded pane. A spinner beside the toolbar shows
    while a page is loading, and a site that refuses to load is reported **in the pane
-   itself** with a plain-language reason rather than only in the activity log. The **↗**
-   button opens the current site in your system default browser. (it's a real Chromium view, not an
+   itself** with a plain-language reason rather than only in the activity log, along with
+   three buttons: **Open in your browser**, **Mark as No access** and **Try again**. The
+   **↗** button in the toolbar does the same as the first, for a site that did load. (it's a real Chromium view, not an
    iframe, so it isn't blocked by sites that refuse to be framed — you can click links,
    scroll, log in, etc.).
 6. **Comment** field — free text, saved to the comment column as soon as you click away
@@ -209,6 +210,12 @@ workbook is reopened and the columns reapplied automatically.
   window.
 - Crawling is one level deep and same-domain only. Pages reachable only through a menu
   that needs JavaScript interaction, or on a different host, are not visited.
+- The error page's buttons work by navigating to a reserved `.invalid` host that the main
+  process intercepts. They deliberately do **not** go through an IPC bridge: the view that
+  shows the error page is the same one that loads the sites under investigation, and a
+  preload there would expose that bridge to them. Two guards apply — the view must be
+  showing the error document, and that document must be the local file — so a remote page
+  cannot trigger one.
 - Docking resizes both windows to split the work area. It is skipped when the display is
   too narrow to leave the main window at least 640px.
 - **Undo/Redo** and **Previous** history are per-session (in memory only); they reset when
