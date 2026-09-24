@@ -28,6 +28,39 @@ body.capture {
 }
 .capRef input { width: 130px; font-variant-numeric: tabular-nums; }
 
+#tabStrip {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+  flex: none;
+}
+#tabStrip:empty { display: none; }
+.tab {
+  flex: none;
+  max-width: 230px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab:hover:not(:disabled) { background: var(--bg-hover); border-color: transparent; }
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  background: var(--bg-raised);
+}
+.tab .tabRow { color: var(--text-dim); margin-right: 6px; }
+
 #capMain {
   flex: 1;
   min-height: 0;

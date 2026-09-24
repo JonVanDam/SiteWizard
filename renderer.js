@@ -18,6 +18,8 @@ const els = {
   backBtn: document.getElementById('backBtn'),
   forwardBtn: document.getElementById('forwardBtn'),
   reloadBtn: document.getElementById('reloadBtn'),
+  externalBtn: document.getElementById('externalBtn'),
+  loadSpinner: document.getElementById('loadSpinner'),
   commentField: document.getElementById('commentField'),
   undoBtn: document.getElementById('undoBtn'),
   redoBtn: document.getElementById('redoBtn'),
@@ -65,6 +67,12 @@ function appendLog(msg) {
 window.api.onLog((msg) => appendLog(msg));
 window.api.onNav((navState) => {
   els.addressBar.value = navState.url;
+});
+
+// A crawl-heavy site can take a while; show that something is happening.
+window.api.onLoadState((s) => {
+  els.loadSpinner.hidden = !s.loading;
+  els.addressBar.classList.toggle('loading', !!s.loading);
 });
 
 function updateBounds() {
@@ -452,6 +460,13 @@ els.outputBtn.addEventListener('click', async () => {
 els.backBtn.addEventListener('click', () => window.api.navBack());
 els.forwardBtn.addEventListener('click', () => window.api.navForward());
 els.reloadBtn.addEventListener('click', () => window.api.navReload());
+els.externalBtn.addEventListener('click', async () => {
+  try {
+    await window.api.openExternal();
+  } catch (err) {
+    appendLog('Error: ' + err.message);
+  }
+});
 
 els.generateBtn.addEventListener('click', async () => {
   await flushComment();

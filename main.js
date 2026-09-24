@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, dialog, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
@@ -8,6 +8,7 @@ const ImageModule = require('docxtemplater-image-module-free');
 
 let mainWindow;
 let browserView;
+let reviewWindow = null;
 
 // Seeded into the Gevolg options sheet the first time it has to be created.
 // After that the sheet is the source of truth and can be edited in Excel.
@@ -69,6 +70,11 @@ const state = {
   refColIdx: null, // column holding the report reference, null if not configured
   inbreukColIdx: null, // column holding the infringement articles
   currentRow: null, // 0-based sheet row index of the entry currently on screen
+
+  // What the address bar should show, which is not always what the view has
+  // loaded: a failed page is replaced by a local error document.
+  intendedUrl: '',
+  showingError: false,
 
   // Background capture jobs. Screenshots live on disk; a job only holds
   // metadata and thumbnails.
@@ -132,21 +138,140 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
 
-  browserView = new BrowserView();
+  browserView = new BrowserView({ webPreferences: { backgroundColor: '#1b1b1d' } });
   mainWindow.setBrowserView(browserView);
   browserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-  browserView.webContents.loadURL('about:blank');
+  // about:blank is white and stays on screen whenever there is no entry, which
+  // is hard on the eyes next to the rest of the dark UI.
+  browserView.setBackgroundColor('#1b1b1d');
+  showIdlePage();
 
-  browserView.webContents.on('did-navigate', (e, url) => {
+  const sendNav = (url) => {
+    if (state.showingError) return; // keep the failed address on screen
+    state.intendedUrl = url;
     mainWindow.webContents.send('nav-state', { url });
+  };
+
+  browserView.webContents.on('did-navigate', (e, url) => sendNav(url));
+  browserView.webContents.on('did-navigate-in-page', (e, url) => sendNav(url));
+
+  browserView.webContents.on('did-start-loading', () => {
+    mainWindow.webContents.send('load-state', { loading: true });
   });
-  browserView.webContents.on('did-navigate-in-page', (e, url) => {
-    mainWindow.webContents.send('nav-state', { url });
+  browserView.webContents.on('did-stop-loading', () => {
+    mainWindow.webContents.send('load-state', { loading: false });
   });
-  browserView.webContents.on('did-fail-load', (e, errorCode, errorDescription, validatedURL) => {
+
+  browserView.webContents.on('did-fail-load', (e, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (errorCode === -3) return; // ERR_ABORTED, usually just a superseded navigation
-    log(`Failed to load ${validatedURL || '(unknown URL)'}: ${errorDescription} (${errorCode})`);
+    if (!isMainFrame) return; // a failed image or iframe is not a failed page
+    const url = validatedURL || state.intendedUrl || '(unknown URL)';
+    log(`Failed to load ${url}: ${errorDescription} (${errorCode})`);
+    showErrorPage(url, errorDescription, errorCode);
   });
+
+  // Certificate problems are common on these sites and otherwise surface as a
+  // bare ERR_CERT_* with no explanation in the view.
+  browserView.webContents.on('certificate-error', (e, url, error) => {
+    log(`Certificate problem on ${url}: ${error}`);
+  });
+}
+
+// ---- idle page ---------------------------------------------------------
+
+function idlePagePath() {
+  return path.join(app.getPath('temp'), 'sitewizard-idle.html');
+}
+
+function showIdlePage() {
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; font-family: "Segoe UI", system-ui, sans-serif; }
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #1b1b1d; color: #6f6d6a; }
+  .idle { text-align: center; font-size: 13px; line-height: 1.7; }
+  .idle strong { color: #9c9a96; font-weight: 600; display: block; margin-bottom: 4px; font-size: 14px; }
+</style></head>
+<body><div class="idle"><strong>No site loaded</strong>Load a workbook and apply the columns to begin.</div></body></html>`;
+  try {
+    fs.writeFileSync(idlePagePath(), html, 'utf8');
+    state.showingError = false;
+    state.intendedUrl = '';
+    browserView.webContents.loadFile(idlePagePath()).catch(() => {});
+  } catch {
+    browserView.webContents.loadURL('about:blank');
+  }
+}
+
+// ---- in-view error page ------------------------------------------------
+// Rendered into the BrowserView itself so a failure is visible where the page
+// would have been, not only in the activity log. Written to a temp file rather
+// than a data: URL because Chromium blocks top-level data: navigations.
+
+function errorPagePath() {
+  return path.join(app.getPath('temp'), 'sitewizard-error.html');
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Plain-language causes for the codes these sites actually produce.
+function explainLoadError(code) {
+  const reasons = {
+    '-2': 'The request failed. The server may be refusing connections.',
+    '-6': 'The file or page could not be found.',
+    '-7': 'The site took too long to respond and the request timed out.',
+    '-21': 'The network changed while the page was loading.',
+    '-102': 'The connection was refused — nothing is listening on that address.',
+    '-105': 'The domain name could not be resolved. It may no longer exist.',
+    '-106': 'The machine appears to be offline.',
+    '-109': 'The host is unreachable.',
+    '-118': 'The connection timed out before the site responded.',
+    '-130': 'A proxy refused the connection.',
+    '-137': 'The domain name could not be resolved.',
+    '-200': 'The site presented a certificate that is not valid.',
+    '-201': 'The certificate has expired or is not yet valid.',
+    '-202': 'The certificate was issued for a different domain.',
+    '-501': 'The site is not sending a usable response.',
+  };
+  return reasons[String(code)] || 'The page could not be displayed.';
+}
+
+function showErrorPage(url, description, code) {
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; font-family: "Segoe UI", system-ui, sans-serif; }
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #1b1b1d; color: #e9e7e4; padding: 32px; }
+  .card { max-width: 560px; text-align: center; }
+  .icon { font-size: 34px; color: #d9a441; margin-bottom: 14px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
+  p { font-size: 13.5px; line-height: 1.6; color: #9c9a96; margin: 0 0 14px; }
+  .url { font-size: 12.5px; color: #4a9cbe; word-break: break-all; margin-bottom: 18px; }
+  .detail { font-family: Consolas, monospace; font-size: 11.5px; color: #6f6d6a;
+            border-top: 1px solid #2e2e34; padding-top: 12px; }
+</style></head>
+<body><div class="card">
+  <div class="icon">&#9888;</div>
+  <h1>This site could not be opened</h1>
+  <div class="url">${escapeHtml(url)}</div>
+  <p>${escapeHtml(explainLoadError(code))}</p>
+  <p>Use <strong>Open externally</strong> in the toolbar to try it in your normal browser,
+     or mark the entry as <strong>No access</strong>.</p>
+  <div class="detail">${escapeHtml(description)} (${escapeHtml(code)})</div>
+</div></body></html>`;
+  try {
+    fs.writeFileSync(errorPagePath(), html, 'utf8');
+    state.showingError = true;
+    browserView.webContents.loadFile(errorPagePath()).catch(() => {});
+  } catch (err) {
+    log('Could not display the error page: ' + err.message);
+  }
 }
 
 app.whenReady().then(createWindow);
@@ -442,6 +567,9 @@ function navigateBrowserView(url) {
   if (!/^https?:\/\//i.test(target)) {
     target = 'https://' + target;
   }
+  state.showingError = false;
+  state.intendedUrl = target;
+  if (mainWindow) mainWindow.webContents.send('nav-state', { url: target });
   browserView.webContents.loadURL(target).catch((err) => {
     log('Failed to load ' + target + ': ' + err.message);
   });
@@ -532,7 +660,12 @@ function writeReport(context, screenshots) {
       datum: context.datum || '',
       controleur: context.controleur || '',
       bron: context.bron || '',
-      screenshots: screenshots.map((_, i) => i + 1),
+      // Each iteration carries the page it came from so the template can
+      // print the URL above the image.
+      screenshots: screenshots.map((shot, i) => ({
+        image: i + 1,
+        pageUrl: shot.pageUrl || context.site,
+      })),
       ...gevolgTagValues(context.gevolg),
       ...inbreukTagValues(context.inbreuk),
     });
@@ -804,8 +937,13 @@ function publicJob(job) {
 }
 
 function broadcastJobs() {
+  const payload = state.captureJobs.map(publicJob);
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('capture-jobs', state.captureJobs.map(publicJob));
+    mainWindow.webContents.send('capture-jobs', payload);
+  }
+  // The review window shows a tab per finished capture, so it needs these too.
+  if (reviewWindow && !reviewWindow.isDestroyed()) {
+    reviewWindow.webContents.send('capture-jobs', payload);
   }
 }
 
@@ -951,7 +1089,11 @@ function moveToRow(row) {
     state.historyPos = state.history.length - 1;
   }
   state.currentRow = isValid ? row : null;
-  navigateBrowserView(isValid ? rowUrl(state.workbook.Sheets[state.sheetName], row) : 'about:blank');
+  if (isValid) {
+    navigateBrowserView(rowUrl(state.workbook.Sheets[state.sheetName], row));
+  } else {
+    showIdlePage();
+  }
   return buildEntryInfo(state.currentRow);
 }
 
@@ -1148,7 +1290,21 @@ ipcMain.handle('browserview:forward', () => {
   if (browserView.webContents.canGoForward()) browserView.webContents.goForward();
 });
 ipcMain.handle('browserview:reload', () => {
+  // After a failure the view holds the local error document, so reloading it
+  // would just redisplay the error.
+  if (state.showingError && state.intendedUrl) {
+    navigateBrowserView(state.intendedUrl);
+    return;
+  }
   browserView.webContents.reload();
+});
+
+ipcMain.handle('browserview:openExternal', async () => {
+  const url = state.intendedUrl || browserView.webContents.getURL();
+  if (!url || !/^https?:\/\//i.test(url)) throw new Error('No site to open');
+  await shell.openExternal(url);
+  log('Opened in the default browser: ' + url);
+  return url;
 });
 
 // ---- IPC: workflow actions ---------------------------------------------
@@ -1244,8 +1400,6 @@ ipcMain.handle('entries:saveComment', async (event, value) => {
 // job finishes, its review window is where the screenshots are chosen and the
 // report is finally written; nothing touches the sheet before that.
 
-let reviewWindow = null;
-
 ipcMain.handle('capture:jobs', async () => state.captureJobs.map(publicJob));
 
 ipcMain.handle('capture:queue', async () => {
@@ -1282,6 +1436,24 @@ ipcMain.handle('capture:dismissJob', async (event, id) => {
   return true;
 });
 
+// Puts the two windows side by side across the work area rather than leaving
+// the review window floating over the browser.
+function dockReviewWindow() {
+  if (!mainWindow || mainWindow.isDestroyed() || !reviewWindow || reviewWindow.isDestroyed()) return;
+  try {
+    const display = screen.getDisplayMatching(mainWindow.getBounds());
+    const wa = display.workArea;
+    const reviewWidth = Math.max(560, Math.min(760, Math.round(wa.width * 0.42)));
+    const mainWidth = wa.width - reviewWidth;
+    if (mainWidth < 640) return; // too narrow to split usefully; leave both alone
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    mainWindow.setBounds({ x: wa.x, y: wa.y, width: mainWidth, height: wa.height });
+    reviewWindow.setBounds({ x: wa.x + mainWidth, y: wa.y, width: reviewWidth, height: wa.height });
+  } catch (err) {
+    log('Could not dock the report window: ' + err.message);
+  }
+}
+
 ipcMain.handle('capture:review', async (event, id) => {
   const job = state.captureJobs.find((j) => j.id === id);
   if (!job) throw new Error('That capture is no longer available');
@@ -1289,7 +1461,7 @@ ipcMain.handle('capture:review', async (event, id) => {
   state.activeReviewJobId = id;
 
   if (reviewWindow && !reviewWindow.isDestroyed()) {
-    reviewWindow.webContents.reload();
+    reviewWindow.webContents.send('review-switch', id);
     reviewWindow.focus();
     return true;
   }
@@ -1309,6 +1481,7 @@ ipcMain.handle('capture:review', async (event, id) => {
   });
   reviewWindow.setMenu(null);
   reviewWindow.loadFile('capture.html');
+  reviewWindow.once('ready-to-show', dockReviewWindow);
   reviewWindow.on('closed', () => {
     reviewWindow = null;
     state.activeReviewJobId = null;
@@ -1339,6 +1512,10 @@ ipcMain.handle('capture:context', async () => {
 
   return {
     jobId: job.id,
+    // One tab per finished capture, so they can be worked through as they land.
+    tabs: state.captureJobs
+      .filter((j) => j.status === 'done')
+      .map((j) => ({ id: j.id, row: j.row, url: j.url, shotCount: j.shots.length })),
     row,
     url: job.url,
     rawUrl: raw === undefined ? '' : String(raw),
@@ -1378,6 +1555,13 @@ ipcMain.handle('capture:image', async (event, id) => {
   }
 });
 
+ipcMain.handle('capture:selectJob', async (event, id) => {
+  const job = state.captureJobs.find((j) => j.id === id && j.status === 'done');
+  if (!job) throw new Error('That capture is no longer available');
+  state.activeReviewJobId = id;
+  return true;
+});
+
 ipcMain.handle('capture:cancel', async () => {
   if (reviewWindow && !reviewWindow.isDestroyed()) reviewWindow.close();
   return true;
@@ -1393,7 +1577,12 @@ ipcMain.handle('capture:generate', async (event, payload) => {
   const chosen = (payload.selectedIds || [])
     .map((id) => job.shots.find((s) => s.id === id))
     .filter(Boolean)
-    .map((s) => ({ buffer: fs.readFileSync(s.file), width: s.width, height: s.height }));
+    .map((s) => ({
+      buffer: fs.readFileSync(s.file),
+      width: s.width,
+      height: s.height,
+      pageUrl: s.pageUrl,
+    }));
   if (chosen.length === 0) throw new Error('Select at least one screenshot');
 
   const context = {
@@ -1454,9 +1643,21 @@ ipcMain.handle('capture:generate', async (event, payload) => {
   state.activeReviewJobId = null;
   broadcastJobs();
 
-  if (reviewWindow && !reviewWindow.isDestroyed()) reviewWindow.close();
+  // Keep the window open while there are other captures waiting to be dealt with.
+  const next = state.captureJobs.find((j) => j.status === 'done');
+  if (next) {
+    state.activeReviewJobId = next.id;
+  } else if (reviewWindow && !reviewWindow.isDestroyed()) {
+    reviewWindow.close();
+  }
+
   if (mainWindow) mainWindow.webContents.send('report-created', { row: row, outPath: outPath, reference: context.refnr });
-  return { outPath: outPath, screenshotCount: chosen.length, reference: context.refnr };
+  return {
+    outPath: outPath,
+    screenshotCount: chosen.length,
+    reference: context.refnr,
+    next: next ? next.id : null,
+  };
 });
 
 ipcMain.handle('report:delete', async () => {

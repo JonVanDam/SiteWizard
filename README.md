@@ -61,7 +61,10 @@ browser more room; the one in the toolbar brings it back.
    (`winbeast.com + winbeast1.com`), only the first is opened and reported on. Separators
    recognised are `+`, `,`, `;`, line breaks and runs of spaces. The cell itself is never
    rewritten, so the other URLs stay in the sheet.
-5. Browse the site normally in the embedded pane (it's a real Chromium view, not an
+5. Browse the site normally in the embedded pane. A spinner beside the toolbar shows
+   while a page is loading, and a site that refuses to load is reported **in the pane
+   itself** with a plain-language reason rather than only in the activity log. The **↗**
+   button opens the current site in your system default browser. (it's a real Chromium view, not an
    iframe, so it isn't blocked by sites that refuse to be framed — you can click links,
    scroll, log in, etc.).
 6. **Comment** field — free text, saved to the comment column as soon as you click away
@@ -97,7 +100,13 @@ level deep, 20 pages maximum. Tall pages are captured as several stacked slices 
 four). Screenshots are written to a temp folder rather than held in memory, so a queue of
 sites doesn't grow the app's footprint.
 
-**Review** opens the report window for that job:
+**Review** opens the report window, docked to the right of the main window with the two
+sharing the work area. If several captures are ready it shows **a tab per capture**, so
+they can be dealt with as they land; generating one moves straight to the next and the
+window only closes when none are left. A capture that finishes while the window is open
+adds its tab without disturbing what you are working on.
+
+For the capture being reviewed:
 
 - Every screenshot is listed with a thumbnail, its page URL and which slice it is. All are
   kept by default; untick the ones you don't want, or use **Select all** / **Select none**.
@@ -130,17 +139,19 @@ Select any `.docx` as the template via **Select Report Template…**. In that do
 | `{controleur}` | the agent name |
 | `{bron}` | the source |
 
-For screenshots, use a `docxtemplater` loop rather than a single image tag:
+For screenshots, use a `docxtemplater` loop. Each iteration carries the page the shot came
+from, so the URL can be printed above the image:
 
 ```
 {#screenshots}
-{%.}
+{pageUrl}
+{%image}
 {/screenshots}
 ```
 
-Each selected screenshot becomes one iteration of that loop. This replaces the older
-single `{%screenshots}` tag — if you already built a template with that, change it to the
-loop form above.
+Each selected screenshot becomes one iteration. Earlier forms of this tag — a single
+`{%screenshots}`, or a loop body of `{%.}` — no longer work; update the template to the
+form above.
 
 For the follow-up measures, three tag shapes are available — use whichever suits the
 document:
@@ -198,6 +209,8 @@ workbook is reopened and the columns reapplied automatically.
   window.
 - Crawling is one level deep and same-domain only. Pages reachable only through a menu
   that needs JavaScript interaction, or on a different host, are not visited.
+- Docking resizes both windows to split the work area. It is skipped when the display is
+  too narrow to leave the main window at least 640px.
 - **Undo/Redo** and **Previous** history are per-session (in memory only); they reset when
   you reload the sheet or restart the app. The Excel file itself is always safe either way
   since every write is saved immediately.

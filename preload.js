@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('api', {
   navBack: () => ipcRenderer.invoke('browserview:back'),
   navForward: () => ipcRenderer.invoke('browserview:forward'),
   navReload: () => ipcRenderer.invoke('browserview:reload'),
+  openExternal: () => ipcRenderer.invoke('browserview:openExternal'),
 
   markStatus: (status) => ipcRenderer.invoke('entries:markStatus', status),
   skip: () => ipcRenderer.invoke('entries:skip'),
@@ -32,6 +33,8 @@ contextBridge.exposeInMainWorld('api', {
   onCaptureJobs: (cb) => ipcRenderer.on('capture-jobs', (event, jobs) => cb(jobs)),
 
   captureContext: () => ipcRenderer.invoke('capture:context'),
+  selectJob: (id) => ipcRenderer.invoke('capture:selectJob', id),
+  onReviewSwitch: (cb) => ipcRenderer.on('review-switch', (event, id) => cb(id)),
   captureImage: (id) => ipcRenderer.invoke('capture:image', id),
   captureCancel: () => ipcRenderer.invoke('capture:cancel'),
   captureGenerate: (payload) => ipcRenderer.invoke('capture:generate', payload),
@@ -40,5 +43,6 @@ contextBridge.exposeInMainWorld('api', {
 
   onLog: (cb) => ipcRenderer.on('log', (event, msg) => cb(msg)),
   onNav: (cb) => ipcRenderer.on('nav-state', (event, navState) => cb(navState)),
+  onLoadState: (cb) => ipcRenderer.on('load-state', (event, s) => cb(s)),
   onReportCreated: (cb) => ipcRenderer.on('report-created', (event, info) => cb(info)),
 });

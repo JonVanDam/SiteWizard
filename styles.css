@@ -155,6 +155,8 @@ button.iconBtn { padding: 4px 8px; line-height: 1; }
   font-size: 12px;
 }
 #currentInfo { font-size: 12px; white-space: nowrap; }
+#addressBar.loading { color: var(--text-dim); }
+#navbar .spinner { flex: none; }
 
 #commentBar {
   display: flex;
@@ -174,7 +176,8 @@ button.iconBtn { padding: 4px 8px; line-height: 1; }
 }
 #commentField { flex: 1; resize: vertical; line-height: 1.45; }
 
-#bvContainer { flex: 1; min-height: 0; background: #ffffff; }
+/* Matches the BrowserView's own background so nothing flashes white. */
+#bvContainer { flex: 1; min-height: 0; background: var(--bg); }
 
 /* Two rows, so the triage verbs stay together and stay reachable when the
    window is narrow -- agents run this side by side with the report window. */

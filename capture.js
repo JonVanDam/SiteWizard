@@ -1,4 +1,5 @@
 const els = {
+  tabStrip: document.getElementById('tabStrip'),
   site: document.getElementById('capSite'),
   ref: document.getElementById('refField'),
   refBadge: document.getElementById('refBadge'),
@@ -211,7 +212,7 @@ els.generateBtn.addEventListener('click', async () => {
   els.generateBtn.disabled = true;
   els.generateBtn.textContent = 'Generating…';
   try {
-    await window.api.captureGenerate({
+    const result = await window.api.captureGenerate({
       selectedIds: shots.filter((s) => selected.has(s.id)).map((s) => s.id),
       reference: els.ref.value.trim(),
       agentName: els.agentSelect.value,
@@ -220,6 +221,8 @@ els.generateBtn.addEventListener('click', async () => {
       gevolg: gevolgSelection,
       inbreuk: inbreukSelection,
     });
+    // Another capture is waiting; stay open and move on to it.
+    if (result && result.next) await load();
   } catch (err) {
     alert(err.message);
     els.generateBtn.disabled = false;
@@ -227,8 +230,37 @@ els.generateBtn.addEventListener('click', async () => {
   }
 });
 
-(async () => {
+let activeJobId = null;
+
+function renderTabs(tabs) {
+  els.tabStrip.innerHTML = '';
+  if (!tabs || tabs.length < 2) return; // a single capture needs no tab strip
+  tabs.forEach((t) => {
+    const btn = document.createElement('button');
+    btn.className = 'tab' + (t.id === activeJobId ? ' active' : '');
+    btn.title = `${t.url} — ${t.shotCount} screenshot(s)`;
+    btn.innerHTML = `<span class="tabRow">Row ${t.row + 1}</span>`;
+    btn.appendChild(document.createTextNode(t.url.replace(/^https?:\/\//, '')));
+    btn.addEventListener('click', async () => {
+      if (t.id === activeJobId) return;
+      await window.api.selectJob(t.id);
+      await load();
+    });
+    els.tabStrip.appendChild(btn);
+  });
+}
+
+async function load() {
   const ctx = await window.api.captureContext();
+  activeJobId = ctx.jobId;
+
+  // Reset per-capture state before rebuilding, so nothing leaks across tabs.
+  shots = [];
+  selected.clear();
+  gevolgSelection = [];
+  inbreukSelection = [];
+
+  renderTabs(ctx.tabs);
 
   els.site.textContent =
     ctx.rawUrl && ctx.rawUrl !== ctx.url ? `${ctx.url}   (cell: ${ctx.rawUrl})` : ctx.url;
@@ -260,4 +292,23 @@ els.generateBtn.addEventListener('click', async () => {
   shots = ctx.shots || [];
   shots.forEach((s) => selected.add(s.id));
   renderShots();
-})();
+
+  els.generateBtn.textContent = 'Generate Report';
+}
+
+// A capture finishing elsewhere adds a tab without disturbing this one.
+window.api.onCaptureJobs((jobs) => {
+  renderTabs(
+    jobs.filter((j) => j.status === 'done').map((j) => ({
+      id: j.id,
+      row: j.row,
+      url: j.url,
+      shotCount: j.shotCount,
+    }))
+  );
+});
+
+// Clicking Review in the main window while this is open switches tab.
+window.api.onReviewSwitch(() => load());
+
+load();
