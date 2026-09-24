@@ -113,7 +113,7 @@ button.iconBtn { padding: 4px 8px; line-height: 1; }
   border-radius: var(--radius-sm);
   min-height: 34px;
 }
-.slot.over { border-color: var(--accent); background: #2f2a29; }
+.slot.over { border-color: var(--accent); background: #242f35; }
 .slot.filled { border-color: var(--border); }
 .slot[data-required="1"].unfilled { border-color: var(--accent-dim); }
 

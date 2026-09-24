@@ -76,7 +76,7 @@ body.capture {
   transition: border-color 0.12s ease, background 0.12s ease;
 }
 .shot:hover { border-color: var(--border); }
-.shot.selected { border-color: var(--accent-dim); background: #2a2529; }
+.shot.selected { border-color: var(--accent-dim); background: #222b30; }
 
 .shot input[type="checkbox"] { margin-top: 4px; flex: none; }
 

@@ -11,9 +11,9 @@
   --text: #e9e7e4;
   --text-muted: #9c9a96;
   --text-dim: #6f6d6a;
-  --accent: #d97757;
-  --accent-hover: #e08c70;
-  --accent-dim: #8a4a35;
+  --accent: #4a9cbe;
+  --accent-hover: #5fb0d0;
+  --accent-dim: #2f6a83;
   --danger: #e0645f;
   --warn: #d9a441;
   --ok: #6fa97a;
@@ -42,6 +42,11 @@ h1 {
   margin: 0;
   letter-spacing: 0.2px;
 }
+
+/* The UA rule for [hidden] is display:none at the lowest specificity, so any
+   element given a display of its own by an id or class selector ignores the
+   attribute and stays on screen. Enforce it once, globally. */
+[hidden] { display: none !important; }
 
 .muted { color: var(--text-muted); }
 .small { font-size: 12px; }
@@ -91,7 +96,7 @@ input[type="text"]:focus,
 select:focus,
 textarea:focus {
   border-color: var(--accent-dim);
-  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.15);
+  box-shadow: 0 0 0 2px rgba(74, 156, 190, 0.18);
 }
 input::placeholder,
 textarea::placeholder { color: var(--text-dim); }
