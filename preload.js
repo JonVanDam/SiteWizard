@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
   onReviewSwitch: (cb) => ipcRenderer.on('review-switch', (event, id) => cb(id)),
   captureImage: (id) => ipcRenderer.invoke('capture:image', id),
   captureCancel: () => ipcRenderer.invoke('capture:cancel'),
+  dismissCurrent: () => ipcRenderer.invoke('capture:dismissCurrent'),
   captureGenerate: (payload) => ipcRenderer.invoke('capture:generate', payload),
 
   deleteReport: () => ipcRenderer.invoke('report:delete'),

@@ -109,8 +109,12 @@ adds its tab without disturbing what you are working on.
 
 For the capture being reviewed:
 
-- Every screenshot is listed with a thumbnail, its page URL and which slice it is. All are
-  kept by default; untick the ones you don't want, or use **Select all** / **Select none**.
+- Every screenshot is listed with a thumbnail, its page URL, **how it was reached** (the
+  text of the link clicked from the homepage, or "Homepage" for the site's front page) and
+  which slice it is. All are kept by default; untick the ones you don't want, or use
+  **Select all** / **Select none**.
+- **Dismiss** discards the capture on screen and moves to the next one; the window closes
+  only when none are left.
 - **Click or right-click a thumbnail** to open it fullscreen at native resolution. Escape
   closes it.
 - **Reference** is filled in at the top. If the row already has one it is reused as-is;
@@ -119,6 +123,14 @@ For the capture being reviewed:
 - **Agent Name**, **Datum onderzoek**, **Bron**, the **Infractions** articles and the
   **Gevolg** measures are chosen in the right-hand panel. The agent name is remembered between runs; Bron is pre-filled from
   the row's own Bron column when the sheet has one.
+
+**Domains found while crawling.** Links pointing off the site are collected as it is
+crawled — on an affiliate or link site these are usually the operators being advertised.
+If any are not already in the sheet, pressing Generate first asks *"Add new entries for
+the following domain names?"*, listing each with how many times it was linked and an
+example of the link text. Tick the ones worth tracking and choose **Yes**, and a row is
+added for each, with the status left blank so they join the queue. **No** adds none.
+Domains already present anywhere in the URL column are never offered or added twice.
 
 Only when you press **Generate Report** in that window is the `.docx` written and the
 sheet updated — the gevolg measures, the infractions and the reference go in then, and
@@ -145,12 +157,13 @@ from, so the URL can be printed above the image:
 
 ```
 {#screenshots}
-{pageUrl}
+{pageUrl}  {via}
 {%image}
 {/screenshots}
 ```
 
-Each selected screenshot becomes one iteration. Earlier forms of this tag — a single
+Each selected screenshot becomes one iteration. `{via}` reads `via: <link text>` for a
+page reached by clicking through, and is empty for the homepage. Earlier forms of this tag — a single
 `{%screenshots}`, or a loop body of `{%.}` — no longer work; update the template to the
 form above.
 

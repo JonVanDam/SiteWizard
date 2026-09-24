@@ -717,6 +717,8 @@ function writeReport(context, screenshots) {
       screenshots: screenshots.map((shot, i) => ({
         image: i + 1,
         pageUrl: shot.pageUrl || context.site,
+        // How the page was reached, for templates that want to show it.
+        via: shot.via ? `via: ${shot.via}` : '',
       })),
       ...gevolgTagValues(context.gevolg),
       ...inbreukTagValues(context.inbreuk),
@@ -729,6 +731,61 @@ function writeReport(context, screenshots) {
     );
   }
   return doc.getZip().generate({ type: 'nodebuffer' });
+}
+
+// ---- Adding entries discovered while crawling --------------------------
+
+// Every host already listed in the URL column, normalised, so a domain that
+// is already being tracked is never offered or added twice.
+function knownHosts() {
+  const hosts = new Set();
+  if (!state.workbook || state.urlColIdx == null) return hosts;
+  const sheet = state.workbook.Sheets[state.sheetName];
+  for (let r = state.range.s.r + 1; r <= state.range.e.r; r++) {
+    const v = cellValue(sheet, r, state.urlColIdx);
+    if (v === undefined || !String(v).trim()) continue;
+    for (const part of String(v).split(/[+,;\n\r]| {2,}/)) {
+      const clean = part.trim();
+      if (!clean) continue;
+      const host = hostOf(/^https?:\/\//i.test(clean) ? clean : 'https://' + clean);
+      if (host) hosts.add(host);
+    }
+  }
+  return hosts;
+}
+
+// Writes each domain into the first free row below the last entry. Status is
+// left blank so they join the queue like any other unprocessed row.
+function appendEntryRows(domains, sourceUrl) {
+  if (!domains || domains.length === 0) return [];
+  const sheet = state.workbook.Sheets[state.sheetName];
+  const range = state.range;
+  const known = knownHosts();
+
+  let lastUsed = range.s.r;
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const v = cellValue(sheet, r, state.urlColIdx);
+    if (v !== undefined && String(v).trim()) lastUsed = r;
+  }
+
+  const added = [];
+  let row = lastUsed;
+  for (const domain of domains) {
+    const host = hostOf('https://' + String(domain).replace(/^https?:\/\//i, ''));
+    if (!host || known.has(host)) continue;
+    known.add(host);
+    row += 1;
+    if (row > range.e.r) {
+      range.e.r = row;
+      sheet['!ref'] = XLSX.utils.encode_range(range);
+    }
+    setCell(sheet, row, state.urlColIdx, host);
+    if (state.commentColIdx != null) {
+      setCell(sheet, row, state.commentColIdx, `Gevonden via ${sourceUrl}`);
+    }
+    added.push({ host, row });
+  }
+  return added;
 }
 
 // ---- Report references ------------------------------------------------
@@ -816,15 +873,22 @@ function sameSite(a, b) {
 function loadInWindow(win, url) {
   return new Promise((resolve) => {
     let settled = false;
+    // Only one of these fires per load, so both have to be detached by hand:
+    // 'once' leaves the other attached and a 20-page crawl then accumulates
+    // listeners until Node warns about a leak.
+    const onLoad = () => done(true);
+    const onFail = (e, code) => done(code === -3);
     const done = (ok) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      win.webContents.removeListener('did-finish-load', onLoad);
+      win.webContents.removeListener('did-fail-load', onFail);
       resolve(ok);
     };
     const timer = setTimeout(() => done(false), PAGE_LOAD_TIMEOUT_MS);
-    win.webContents.once('did-finish-load', () => done(true));
-    win.webContents.once('did-fail-load', (e, code) => done(code === -3));
+    win.webContents.on('did-finish-load', onLoad);
+    win.webContents.on('did-fail-load', onFail);
     win.webContents.loadURL(url).catch(() => done(false));
   });
 }
@@ -880,6 +944,43 @@ async function captureSlices(win, pageUrl, onShot) {
   }
 }
 
+// Anchors on the current page, with their visible text, so a capture can say
+// how it was reached and so off-site links can be gathered.
+async function collectLinks(win) {
+  try {
+    return await win.webContents.executeJavaScript(
+      "Array.from(document.querySelectorAll('a[href]')).map(function (a) {" +
+        " return { href: a.href, text: (a.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120) }; })"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+// Links pointing somewhere else entirely. On an affiliate or link site these
+// are usually the operators being advertised, which is what makes them worth
+// offering as new entries.
+function noteExternalLinks(links, baseUrl, externals) {
+  for (const link of links) {
+    if (!/^https?:\/\//i.test(link.href)) continue;
+    if (sameSite(link.href, baseUrl)) continue;
+    const host = hostOf(link.href);
+    if (!host) continue;
+    const entry = externals.get(host) || { domain: host, count: 0, text: '' };
+    entry.count += 1;
+    if (!entry.text && link.text) entry.text = link.text;
+    externals.set(host, entry);
+  }
+}
+
 async function crawlAndCapture(startUrl, progress, opts) {
   const root = absoluteUrl(startUrl);
   const win = new BrowserWindow({
@@ -895,7 +996,9 @@ async function crawlAndCapture(startUrl, progress, opts) {
   win.webContents.setAudioMuted(true);
 
   const shots = [];
+  const externals = new Map();
   let nextId = 1;
+  let currentVia = null; // how the page being captured was reached
   // Full-resolution PNGs go straight to disk. A single site is several
   // megabytes, and with a queue there can be many in flight, so only the
   // small thumbnails are kept in memory.
@@ -912,6 +1015,7 @@ async function crawlAndCapture(startUrl, progress, opts) {
       id,
       file,
       pageUrl: shot.pageUrl,
+      via: currentVia,
       slice: shot.slice,
       sliceCount: shot.sliceCount,
       thumb: shot.thumb,
@@ -928,41 +1032,43 @@ async function crawlAndCapture(startUrl, progress, opts) {
       progress({ phase: 'warning', message: `Homepage did not load cleanly: ${root}` });
     }
     const landed = win.webContents.getURL() || root;
+    currentVia = null; // the homepage was not reached by clicking anything
     await captureSlices(win, landed, collect);
 
-    let links = [];
-    try {
-      links = await win.webContents.executeJavaScript(
-        "Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
-      );
-    } catch {
-      /* no links is fine */
-    }
+    const links = await collectLinks(win);
+    noteExternalLinks(links, landed, externals);
 
     const seen = new Set([landed.split('#')[0]]);
     const queue = [];
-    for (const href of links) {
-      const clean = String(href).split('#')[0];
+    for (const link of links) {
+      const clean = String(link.href).split('#')[0];
       if (!/^https?:\/\//i.test(clean)) continue;
       if (!sameSite(clean, landed)) continue;
       if (seen.has(clean)) continue;
       seen.add(clean);
-      queue.push(clean);
+      queue.push({ url: clean, text: link.text });
       if (queue.length >= MAX_PAGES - 1) break;
     }
     progress({ phase: 'queued', total: queue.length + 1 });
 
     for (let i = 0; i < queue.length; i++) {
       if (opts.isCancelled()) break;
-      progress({ phase: 'loading', page: queue[i], index: i + 2, total: queue.length + 1 });
-      const loaded = await loadInWindow(win, queue[i]);
+      progress({ phase: 'loading', page: queue[i].url, index: i + 2, total: queue.length + 1 });
+      const loaded = await loadInWindow(win, queue[i].url);
       if (!loaded) continue;
-      await captureSlices(win, queue[i], collect);
+      currentVia = queue[i].text || '';
+      await captureSlices(win, queue[i].url, collect);
+      // Sub-pages are not crawled further, but their outbound links still
+      // count towards the domains offered as new entries.
+      noteExternalLinks(await collectLinks(win), landed, externals);
     }
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }
-  return shots;
+  return {
+    shots,
+    externals: [...externals.values()].sort((a, b) => b.count - a.count),
+  };
 }
 
 // ---- Capture queue -----------------------------------------------------
@@ -1025,7 +1131,7 @@ async function runJob(job) {
   const dir = path.join(jobRoot(), job.id);
   try {
     fs.mkdirSync(dir, { recursive: true });
-    job.shots = await crawlAndCapture(
+    const result = await crawlAndCapture(
       job.url,
       (p) => {
         const text = describeProgress(p);
@@ -1036,6 +1142,8 @@ async function runJob(job) {
       },
       { dir, isCancelled: () => job.cancelled }
     );
+    job.shots = result.shots;
+    job.externals = result.externals;
     if (job.cancelled) {
       job.status = 'cancelled';
       job.message = 'Cancelled';
@@ -1082,6 +1190,7 @@ function queueCapture(row, url) {
     status: 'queued',
     message: 'Waiting…',
     shots: [],
+    externals: [],
     cancelled: false,
   };
   state.captureJobs.push(job);
@@ -1563,6 +1672,7 @@ ipcMain.handle('capture:context', async () => {
       : state.gevolgSticky.slice();
 
   const raw = cellValue(sheet, row, state.urlColIdx);
+  const known = knownHosts();
 
   return {
     jobId: job.id,
@@ -1584,9 +1694,14 @@ ipcMain.handle('capture:context', async () => {
     inbreukEnabled: state.inbreukColIdx != null,
     inbreukOptions: INBREUK_OPTIONS,
     inbreuk: inbreukForRow(row),
+    // Off-site domains found while crawling, minus anything already listed.
+    newDomains: (job.externals || [])
+      .filter((e) => !known.has(e.domain))
+      .map((e) => ({ domain: e.domain, count: e.count, text: e.text })),
     shots: job.shots.map((s) => ({
       id: s.id,
       pageUrl: s.pageUrl,
+      via: s.via,
       slice: s.slice,
       sliceCount: s.sliceCount,
       thumb: s.thumb,
@@ -1607,6 +1722,22 @@ ipcMain.handle('capture:image', async (event, id) => {
     log('Could not read a captured screenshot: ' + err.message);
     return null;
   }
+});
+
+// Drops the capture on screen and moves to the next one, rather than closing
+// the whole window as Cancel used to.
+ipcMain.handle('capture:dismissCurrent', async () => {
+  const job = activeJob();
+  job.cancelled = true;
+  discardJobFiles(job);
+  state.captureJobs = state.captureJobs.filter((j) => j.id !== job.id);
+  log(`Row ${job.row + 1}: capture dismissed.`);
+
+  const next = state.captureJobs.find((j) => j.status === 'done');
+  state.activeReviewJobId = next ? next.id : null;
+  broadcastJobs();
+  if (!next && reviewWindow && !reviewWindow.isDestroyed()) reviewWindow.close();
+  return { next: next ? next.id : null };
 });
 
 ipcMain.handle('capture:selectJob', async (event, id) => {
@@ -1636,6 +1767,7 @@ ipcMain.handle('capture:generate', async (event, payload) => {
       width: s.width,
       height: s.height,
       pageUrl: s.pageUrl,
+      via: s.via,
     }));
   if (chosen.length === 0) throw new Error('Select at least one screenshot');
 
@@ -1685,6 +1817,13 @@ ipcMain.handle('capture:generate', async (event, payload) => {
       wrote.push('reference');
     }
   }
+  // New entries for domains the agent ticked in the prompt.
+  const addedRows = appendEntryRows(payload.addDomains || [], url);
+  if (addedRows.length > 0) {
+    wrote.push(`${addedRows.length} new entr${addedRows.length === 1 ? 'y' : 'ies'}`);
+    log(`Added ${addedRows.length} new entr${addedRows.length === 1 ? 'y' : 'ies'}: ${addedRows.map((a) => a.host).join(', ')}`);
+  }
+
   if (wrote.length > 0) saveWorkbook();
 
   saveSettings({ agentName: payload.agentName || '' });

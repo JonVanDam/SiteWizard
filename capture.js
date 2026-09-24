@@ -14,7 +14,13 @@ const els = {
   inbreukPanel: document.getElementById('inbreukPanel'),
   gevolgPanel: document.getElementById('gevolgPanel'),
   gevolgSummary: document.getElementById('gevolgSummary'),
-  cancelBtn: document.getElementById('cancelBtn'),
+  dismissBtn: document.getElementById('dismissBtn'),
+  domainPrompt: document.getElementById('domainPrompt'),
+  domainList: document.getElementById('domainList'),
+  promptHint: document.getElementById('promptHint'),
+  domainYes: document.getElementById('domainYes'),
+  domainNo: document.getElementById('domainNo'),
+  domainNone: document.getElementById('domainNone'),
   generateBtn: document.getElementById('generateBtn'),
   viewer: document.getElementById('viewer'),
   viewerImage: document.getElementById('viewerImage'),
@@ -27,6 +33,7 @@ const selected = new Set();
 let gevolgOptions = [];
 let gevolgSelection = [];
 let inbreukSelection = [];
+let newDomains = [];
 
 // ---- gevolg / infractions --------------------------------------------
 
@@ -162,13 +169,25 @@ function renderShots() {
     const url = document.createElement('div');
     url.className = 'url';
     url.textContent = shot.pageUrl;
+    meta.appendChild(url);
+
+    // shot.via is the link text that led here; null on the homepage itself.
+    const via = document.createElement('div');
+    via.className = 'via';
+    if (shot.via) {
+      via.textContent = `Reached by clicking “${shot.via}”`;
+      via.title = via.textContent;
+    } else {
+      via.textContent = 'Homepage';
+    }
+    meta.appendChild(via);
+
     const sub = document.createElement('div');
     sub.className = 'sub';
     sub.innerHTML =
       `<span>Part ${shot.slice} of ${shot.sliceCount}</span>` +
       `<span>${shot.width}×${shot.height}</span>` +
       '<span>Right-click to enlarge</span>';
-    meta.appendChild(url);
     meta.appendChild(sub);
 
     row.appendChild(box);
@@ -206,9 +225,74 @@ els.selectNoneBtn.addEventListener('click', () => {
   selected.clear();
   renderShots();
 });
-els.cancelBtn.addEventListener('click', () => window.api.captureCancel());
+els.dismissBtn.addEventListener('click', async () => {
+  const result = await window.api.dismissCurrent();
+  // The window stays open while other captures are waiting.
+  if (result && result.next) await load();
+});
+
+// Resolves to the domains to add: [] when the agent says No.
+function askAboutDomains() {
+  return new Promise((resolve) => {
+    els.domainList.innerHTML = '';
+    els.promptHint.textContent =
+      `Linked from this site and not yet in the sheet (${newDomains.length} found).`;
+
+    newDomains.forEach((d, i) => {
+      const row = document.createElement('div');
+      row.className = 'domainRow';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.id = 'dom' + i;
+      box.checked = true;
+      box.dataset.domain = d.domain;
+
+      const info = document.createElement('label');
+      info.className = 'dInfo';
+      info.setAttribute('for', box.id);
+      const name = document.createElement('div');
+      name.className = 'dName';
+      name.textContent = d.domain;
+      const meta = document.createElement('div');
+      meta.className = 'dMeta';
+      meta.textContent = d.text
+        ? `${d.count} link(s) — e.g. “${d.text}”`
+        : `${d.count} link(s)`;
+      info.appendChild(name);
+      info.appendChild(meta);
+
+      row.appendChild(box);
+      row.appendChild(info);
+      els.domainList.appendChild(row);
+    });
+
+    const finish = (accept) => {
+      els.domainPrompt.hidden = true;
+      els.domainYes.onclick = null;
+      els.domainNo.onclick = null;
+      els.domainNone.onclick = null;
+      if (!accept) return resolve([]);
+      resolve(
+        [...els.domainList.querySelectorAll('input[type="checkbox"]')]
+          .filter((b) => b.checked)
+          .map((b) => b.dataset.domain)
+      );
+    };
+
+    els.domainYes.onclick = () => finish(true);
+    els.domainNo.onclick = () => finish(false);
+    els.domainNone.onclick = () => {
+      els.domainList.querySelectorAll('input[type="checkbox"]').forEach((b) => (b.checked = false));
+    };
+    els.domainPrompt.hidden = false;
+  });
+}
 
 els.generateBtn.addEventListener('click', async () => {
+  let addDomains = [];
+  if (newDomains.length > 0) {
+    addDomains = await askAboutDomains();
+  }
   els.generateBtn.disabled = true;
   els.generateBtn.textContent = 'Generating…';
   try {
@@ -220,6 +304,7 @@ els.generateBtn.addEventListener('click', async () => {
       bron: els.bron.value.trim(),
       gevolg: gevolgSelection,
       inbreuk: inbreukSelection,
+      addDomains,
     });
     // Another capture is waiting; stay open and move on to it.
     if (result && result.next) await load();
@@ -259,6 +344,7 @@ async function load() {
   selected.clear();
   gevolgSelection = [];
   inbreukSelection = [];
+  newDomains = [];
 
   renderTabs(ctx.tabs);
 
@@ -281,6 +367,7 @@ async function load() {
   els.datum.value = new Date().toLocaleDateString('nl-BE');
   els.bron.value = ctx.bron || '';
 
+  newDomains = ctx.newDomains || [];
   inbreukSelection = ctx.inbreuk || [];
   buildInbreuk(ctx.inbreukOptions || []);
 

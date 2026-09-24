@@ -231,3 +231,53 @@ body.capture {
   #shotPane { min-height: 220px; }
   #capSite { max-width: 100%; white-space: normal; }
 }
+
+/* ---- prompt for domains found while crawling ---- */
+
+#domainPrompt {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 12, 14, 0.7);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.promptCard {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.promptCard h2 { font-size: 14px; font-weight: 600; margin: 0; }
+#domainList {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  padding: 6px 8px;
+}
+.domainRow { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; }
+.domainRow input { margin-top: 2px; flex: none; }
+.domainRow .dInfo { min-width: 0; flex: 1; }
+.domainRow .dName { font-size: 12.5px; color: var(--text); word-break: break-all; }
+.domainRow .dMeta { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+.promptActions { display: flex; align-items: center; gap: 8px; }
+
+/* how a capture was reached */
+.shot .meta .via {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

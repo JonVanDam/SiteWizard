@@ -61,11 +61,25 @@
       </div>
 
       <div id="capActions">
-        <button id="cancelBtn" class="ghost">Cancel</button>
+        <button id="dismissBtn" class="ghost" title="Discard this capture and move to the next">Dismiss</button>
         <button id="generateBtn" class="primary" disabled>Generate Report</button>
       </div>
     </aside>
   </main>
+
+  <div id="domainPrompt" hidden>
+    <div class="promptCard">
+      <h2>Add new entries for the following domain names?</h2>
+      <p class="muted small" id="promptHint"></p>
+      <div id="domainList"></div>
+      <div class="promptActions">
+        <button id="domainNone" class="ghost">Select none</button>
+        <div class="grow"></div>
+        <button id="domainNo" class="ghost">No</button>
+        <button id="domainYes" class="primary">Yes, add selected</button>
+      </div>
+    </div>
+  </div>
 
   <div id="viewer" hidden>
     <div id="viewerBar">
